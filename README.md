@@ -1,0 +1,340 @@
+# 🧋 奶茶点单 AI Agent 系统
+
+一个基于语音识别和大语言模型的智能奶茶点单系统。用户可以通过语音或文字与 AI 接待员对话，系统会自动收集订单信息（饮品、杯型、甜度、冰块、加料等），并在确认后保存到数据库。
+
+## ✨ 特性
+
+- 🎤 **语音输入**：集成 AssemblyAI 实现语音转文本
+- 💬 **智能对话**：使用 GPT-4 实现自然语言交互
+- 📝 **文本输入**：支持文字输入模式（方便测试和使用）
+- 🗄️ **订单管理**：SQLite 数据库存储订单
+- 🎨 **简洁界面**：响应式 Web 界面
+- 📊 **会话管理**：保持对话上下文，支持多轮对话
+
+## 🏗️ 系统架构
+
+```
+┌─────────────┐
+│   前端界面   │ (HTML/CSS/JS)
+└──────┬──────┘
+       │
+       ↓
+┌─────────────────────────────┐
+│      FastAPI 后端服务        │
+├─────────────────────────────┤
+│  ┌──────────────────────┐  │
+│  │  AssemblyAI (STT)    │  │  语音转文本
+│  └──────────────────────┘  │
+│  ┌──────────────────────┐  │
+│  │  LLM Agent (GPT-4)   │  │  智能对话
+│  └──────────────────────┘  │
+│  ┌──────────────────────┐  │
+│  │  会话管理器          │  │  状态管理
+│  └──────────────────────┘  │
+│  ┌──────────────────────┐  │
+│  │  SQLite 数据库       │  │  订单存储
+│  └──────────────────────┘  │
+└─────────────────────────────┘
+```
+
+## 📋 流程说明
+
+1. **用户输入**：通过语音或文字输入需求
+2. **语音识别**：AssemblyAI 将语音转为文本（语音模式）
+3. **LLM 处理**：GPT-4 理解用户意图，收集订单信息
+4. **状态管理**：更新会话状态和订单草稿
+5. **确认订单**：信息收集完整后，向用户复述确认
+6. **保存订单**：用户确认后保存到数据库
+
+## 🚀 快速开始
+
+### 1. 环境要求
+
+- Python 3.8+
+- Node.js（可选，用于前端开发）
+
+### 2. 安装依赖
+
+```bash
+# 克隆项目
+git clone <repository_url>
+cd AiAgentSystem
+
+# 安装 Python 依赖
+pip install -r requirements.txt
+```
+
+### 3. 配置环境变量
+
+复制 `.env.example` 为 `.env` 并填入你的 API Keys：
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件：
+
+```env
+# AssemblyAI API Key
+ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
+
+# OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Database
+DATABASE_PATH=./tea_orders.db
+
+# Server
+HOST=0.0.0.0
+PORT=8000
+```
+
+**获取 API Keys：**
+- AssemblyAI: https://www.assemblyai.com/ （注册后获取）
+- OpenAI: https://platform.openai.com/ （需要 GPT-4 访问权限）
+
+### 4. 启动服务
+
+```bash
+# 启动后端服务
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+服务启动后，访问：
+- API 文档：http://localhost:8000/docs
+- 前端页面：直接在浏览器打开 `frontend/index.html`
+
+### 5. 使用系统
+
+#### 方式一：使用前端界面
+
+1. 在浏览器中打开 `frontend/index.html`
+2. 选择"文字模式"或"语音模式"
+3. 开始与 AI 接待员对话
+
+**文字模式示例对话：**
+```
+用户：我要一杯乌龙奶茶
+AI：好的！请问您想要什么杯型？我们有小杯、中杯、大杯。甜度和冰块呢？
+
+用户：大杯，三分糖，去冰
+AI：好的！为您确认一下：大杯乌龙奶茶，三分糖，去冰。请问需要加料吗？
+
+用户：加珍珠
+AI：好的！为您下单：大杯乌龙奶茶，三分糖，去冰，加珍珠。请问确认下单吗？
+
+用户：确认
+AI：好的，订单已确认！订单号：#1
+```
+
+#### 方式二：使用 API（测试/集成）
+
+**文本输入接口：**
+
+```bash
+curl -X POST "http://localhost:8000/text" \
+  -F "session_id=test_session_123" \
+  -F "text=我要一杯大杯乌龙奶茶，三分糖，去冰"
+```
+
+**语音输入接口：**
+
+```bash
+curl -X POST "http://localhost:8000/talk" \
+  -F "session_id=test_session_123" \
+  -F "audio=@/path/to/audio.wav"
+```
+
+**查询订单：**
+
+```bash
+# 获取所有订单
+curl http://localhost:8000/orders
+
+# 获取特定订单
+curl http://localhost:8000/orders/1
+```
+
+## 📁 项目结构
+
+```
+AiAgentSystem/
+├── backend/
+│   ├── __init__.py
+│   ├── main.py              # FastAPI 主程序
+│   ├── models.py            # 数据模型定义
+│   ├── config.py            # 配置文件
+│   ├── database.py          # SQLite 数据库操作
+│   ├── session_manager.py   # 会话状态管理
+│   ├── stt.py              # AssemblyAI STT 集成
+│   └── agent.py            # LLM Agent 点单逻辑
+├── frontend/
+│   └── index.html          # 前端页面
+├── .env.example            # 环境变量示例
+├── .gitignore
+├── requirements.txt        # Python 依赖
+└── README.md
+```
+
+## 🔧 核心模块说明
+
+### 1. Agent 模块 (`backend/agent.py`)
+
+负责 LLM 对话逻辑：
+- 构建 system prompt，定义 Agent 角色和行为
+- 处理用户输入，更新订单状态
+- 决定下一步动作（继续询问/确认/保存）
+
+### 2. STT 模块 (`backend/stt.py`)
+
+集成 AssemblyAI：
+- 上传音频文件
+- 异步等待转录结果
+- 返回识别的文本
+
+### 3. 数据库模块 (`backend/database.py`)
+
+SQLite 操作：
+- 订单表的创建和初始化
+- 订单的保存和查询
+
+### 4. 会话管理器 (`backend/session_manager.py`)
+
+内存会话状态：
+- 管理多个会话的对话历史
+- 维护订单草稿
+- 跟踪会话状态
+
+## 📊 数据模型
+
+### 订单状态 (OrderState)
+
+```python
+{
+    "drink_name": "乌龙奶茶",      # 饮品名称
+    "size": "大杯",                # 杯型
+    "sugar": "三分糖",             # 甜度
+    "ice": "去冰",                 # 冰块
+    "toppings": ["珍珠"],          # 加料列表
+    "notes": "不要太烫",           # 备注
+    "is_complete": true            # 是否完整
+}
+```
+
+### Agent 响应 (AgentResponse)
+
+```python
+{
+    "assistant_reply": "好的，订单已确认！",
+    "order_state": { ... },
+    "action": "save_order"  # ask_more | confirm | save_order
+}
+```
+
+## 🎯 菜单配置
+
+当前系统内置的菜单（可在 `backend/models.py` 中修改）：
+
+- 乌龙奶茶（¥15）
+- 茉莉奶绿（¥15）
+- 红茶拿铁（¥16）
+- 抹茶拿铁（¥18）
+- 黑糖珍珠奶茶（¥18）
+- 芝士奶盖（¥20）
+
+**配置选项：**
+- 杯型：小杯、中杯、大杯
+- 甜度：无糖、三分糖、五分糖、七分糖、全糖
+- 冰块：去冰、少冰、正常冰、多冰
+- 加料：珍珠、布丁、仙草、椰果、芋圆
+
+## 🧪 测试
+
+### 测试文本模式（不需要 AssemblyAI API Key）
+
+```bash
+# 启动服务
+python -m uvicorn backend.main:app --reload
+
+# 在另一个终端测试
+curl -X POST "http://localhost:8000/text" \
+  -F "session_id=test1" \
+  -F "text=我要一杯奶茶"
+```
+
+### 测试完整流程
+
+1. 设置好 API Keys
+2. 打开前端页面
+3. 选择"文字模式"进行完整点单流程
+4. 测试"语音模式"（需要麦克风权限）
+
+## 📝 API 文档
+
+启动服务后访问 http://localhost:8000/docs 查看完整的 API 文档（Swagger UI）。
+
+### 主要接口
+
+| 接口 | 方法 | 说明 |
+|-----|------|-----|
+| `/talk` | POST | 处理语音输入 |
+| `/text` | POST | 处理文本输入 |
+| `/orders/{order_id}` | GET | 查询订单 |
+| `/orders` | GET | 查询所有订单 |
+| `/session/{session_id}` | GET | 查询会话状态 |
+| `/reset/{session_id}` | POST | 重置会话 |
+
+## 🔍 故障排除
+
+### 1. AssemblyAI 转录失败
+
+- 检查 API Key 是否正确
+- 确认音频格式支持（建议使用 WAV、MP3、WebM）
+- 查看 AssemblyAI 账户余额
+
+### 2. OpenAI API 调用失败
+
+- 检查 API Key 是否正确
+- 确认是否有 GPT-4 访问权限（可降级使用 `gpt-3.5-turbo`）
+- 检查网络连接
+
+### 3. 数据库错误
+
+- 确保有写入权限
+- 检查 `DATABASE_PATH` 配置
+
+## 🚀 部署建议
+
+### 生产环境优化
+
+1. **使用 Redis 替代内存会话管理**：
+   - 支持多实例部署
+   - 会话持久化
+
+2. **使用 PostgreSQL/MySQL 替代 SQLite**：
+   - 更好的并发性能
+   - 更强的数据完整性
+
+3. **添加认证和授权**：
+   - JWT 或 OAuth2
+   - API 限流
+
+4. **配置 HTTPS**：
+   - 使用 Nginx/Caddy 反向代理
+   - SSL 证书
+
+5. **监控和日志**：
+   - 集成 Sentry 错误追踪
+   - 使用 ELK 收集日志
+
+## 📄 许可证
+
+MIT License
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📮 联系方式
+
+如有问题或建议，请提交 Issue。
