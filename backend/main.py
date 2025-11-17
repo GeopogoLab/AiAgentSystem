@@ -154,6 +154,9 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
         # 在回复中添加订单号
         agent_response.assistant_reply += f" 订单号：#{order_id}"
 
+        # 添加订单到历史记录，并自动清理超过 5 个订单的对话历史
+        session_manager.add_order_to_history(session_id, order_id, max_orders=5)
+
         # 重置 order_state，避免后续被重复保存
         from .models import OrderState
         session_manager.update_order_state(session_id, OrderState())

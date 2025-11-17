@@ -106,6 +106,70 @@ class SessionManager:
         """
         return self.sessions
 
+    def add_order_to_history(self, session_id: str, order_id: int, max_orders: int = 5):
+        """
+        添加订单到历史记录，并清理超过限制的对话历史
+
+        Args:
+            session_id: 会话 ID
+            order_id: 订单 ID
+            max_orders: 保留的最大订单数量（默认 5）
+        """
+        session = self.get_session(session_id)
+
+        # 添加订单 ID 到历史列表
+        session.order_history.append(order_id)
+
+        # 如果订单数量超过限制，需要清理旧的对话历史
+        if len(session.order_history) > max_orders:
+            # 计算需要删除的订单数量
+            orders_to_remove = len(session.order_history) - max_orders
+
+            # 移除最旧的订单 ID
+            removed_orders = session.order_history[:orders_to_remove]
+            session.order_history = session.order_history[orders_to_remove:]
+
+            # 清理与这些订单相关的对话历史
+            # 策略：找到第一个保留订单之前的所有对话，全部删除
+            # 假设：每个订单确认时会在对话中包含订单号信息
+            self._trim_history_before_orders(session, removed_orders)
+
+        self.update_session(session_id, session)
+
+    def _trim_history_before_orders(self, session: SessionState, removed_orders: List[int]):
+        """
+        清理与已移除订单相关的对话历史
+
+        策略：保留从最早保留订单开始的所有对话
+        如果无法精确定位，至少保留最近的对话
+
+        Args:
+            session: 会话状态
+            removed_orders: 被移除的订单 ID 列表
+        """
+        if not session.order_history:
+            # 如果没有保留订单，清空所有历史
+            session.history = []
+            return
+
+        # 找到第一个保留订单的位置
+        first_kept_order = session.order_history[0]
+        order_marker = f"#{first_kept_order}"
+
+        # 从后往前搜索，找到第一次提到该订单号的位置
+        cutoff_index = 0
+        for i in range(len(session.history) - 1, -1, -1):
+            if order_marker in session.history[i].content:
+                cutoff_index = max(0, i - 5)  # 保留订单确认前 5 条消息（上下文）
+                break
+
+        # 如果找不到订单号，保守策略：保留最近 20 条消息
+        if cutoff_index == 0 and len(session.history) > 20:
+            cutoff_index = len(session.history) - 20
+
+        # 裁剪历史记录
+        session.history = session.history[cutoff_index:]
+
 
 # 全局会话管理器实例
 session_manager = SessionManager()
