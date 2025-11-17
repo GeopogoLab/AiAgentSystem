@@ -4,11 +4,10 @@ from contextlib import asynccontextmanager
 import json
 import websockets
 import httpx
-import re
 from fastapi import FastAPI, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
-from typing import Optional, Tuple
+from typing import Optional
 
 from .config import config
 from .models import (
@@ -29,7 +28,6 @@ from .database import db
 from .session_manager import session_manager
 from .agent import tea_agent
 from .production import build_order_progress, build_queue_snapshot, find_progress_in_snapshot
-from .progress_agent import progress_agent
 from .pricing import calculate_order_total
 
 @asynccontextmanager
@@ -57,89 +55,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PROGRESS_KEYWORDS = [
-    "进度",
-    "多久",
-    "完成了",
-    "准备好",
-    "order status",
-    "how long",
-    "ready yet",
-    "progress",
-    "queue",
-    "取餐",
-]
-
 
 def _load_queue_snapshot(limit: int = 50, include_order: Optional[int] = None):
+    """加载队列快照"""
     orders = db.get_recent_orders(limit)
     if include_order and not any(order["id"] == include_order for order in orders):
         extra = db.get_order(include_order)
         if extra:
             orders.append(extra)
     return build_queue_snapshot(orders)
-
-
-def _should_route_to_progress(text: str) -> bool:
-    normalized = text.lower()
-    return any(keyword in text for keyword in PROGRESS_KEYWORDS) or any(
-        keyword in normalized for keyword in ["eta", "wait time", "status"]
-    )
-
-
-def _extract_order_id(text: str) -> Optional[int]:
-    match = re.search(r"#?(\d+)", text)
-    if not match:
-        return None
-    try:
-        return int(match.group(1))
-    except ValueError:
-        return None
-
-
-async def _answer_progress_question(
-    session_id: str,
-    user_text: str,
-    explicit_order_id: Optional[int] = None,
-) -> Tuple[str, str, Optional[int], Optional[OrderProgressResponse]]:
-    """执行制作进度查询"""
-    session = session_manager.get_session(session_id)
-    order_id = explicit_order_id or _extract_order_id(user_text) or session.last_order_id
-    snapshot = _load_queue_snapshot(include_order=order_id if order_id else None)
-    session_manager.add_progress_session_message(session_id, "user", user_text)
-
-    progress = None
-    if order_id:
-        order = db.get_order(order_id)
-        if not order:
-            answer = f"未找到编号 #{order_id} 的订单，请确认订单号是否正确。"
-            session_manager.add_progress_session_message(session_id, "assistant", answer, mode="offline")
-            return answer, "offline", order_id, None
-        progress = find_progress_in_snapshot(snapshot, order_id)
-        if not progress:
-            progress = build_order_progress(order)
-        session_manager.add_progress_message(order_id, "user", user_text)
-
-    answer, mode = await progress_agent.answer(user_text, progress, snapshot)
-    session_manager.add_progress_session_message(session_id, "assistant", answer, mode=mode)
-    if order_id and progress:
-        session_manager.add_progress_message(order_id, "assistant", answer, mode=mode)
-
-    return answer, mode, order_id, progress
-
-
-async def _handle_progress_query(session_id: str, session: SessionState, user_text: str) -> TalkResponse:
-    """处理进度询问"""
-    answer, mode, order_id, _ = await _answer_progress_question(session_id, user_text)
-    latest_session = session_manager.get_session(session_id)
-    return TalkResponse(
-        assistant_reply=answer,
-        order_state=latest_session.order_state,
-        order_status=latest_session.status,
-        order_id=order_id,
-        reply_mode=mode,
-        order_total=latest_session.last_order_total,
-    )
 
 
 @app.get("/")
@@ -189,7 +113,7 @@ async def text(session_id: str = Form(...), text: str = Form(...)):
 
 async def _process_text(session_id: str, user_text: str) -> TalkResponse:
     """
-    处理文本的核心逻辑（供 /talk 和 /text 共用）
+    处理文本的核心逻辑
 
     Args:
         session_id: 会话 ID
@@ -199,9 +123,6 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
         TalkResponse
     """
     session = session_manager.get_session(session_id)
-    if _should_route_to_progress(user_text):
-        return await _handle_progress_query(session_id, session, user_text)
-
     history_payload = [{"role": msg.role, "content": msg.content} for msg in session.history]
     agent_response = await tea_agent.process(
         user_text=user_text,
@@ -293,77 +214,6 @@ async def get_order_status(order_id: int):
     if not progress:
         progress = build_order_progress(order)
     return progress
-
-
-@app.post("/orders/{order_id}/progress-chat", response_model=ProgressChatResponse)
-async def progress_chat(order_id: int, payload: ProgressChatRequest):
-    """基于制作进度的问答接口（兼容旧版）"""
-    order = db.get_order(order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="订单不存在")
-    session_id = payload.session_id or f"progress-order-{order_id}"
-    answer, mode, _, progress = await _answer_progress_question(
-        session_id=session_id,
-        user_text=payload.question,
-        explicit_order_id=order_id,
-    )
-    return ProgressChatResponse(answer=answer, progress=progress, mode=mode, order_id=order_id)
-
-
-@app.websocket("/ws/orders/{order_id}/status")
-async def order_status_ws(websocket: WebSocket, order_id: int):
-    """推送订单制作进度的 websocket"""
-    await websocket.accept()
-    try:
-        while True:
-            order = db.get_order(order_id)
-            if not order:
-                await websocket.send_json({"error": "订单不存在"})
-                await asyncio.sleep(5)
-                continue
-
-            snapshot = _load_queue_snapshot(include_order=order_id)
-            progress = find_progress_in_snapshot(snapshot, order_id)
-            if not progress:
-                progress = build_order_progress(order)
-            await websocket.send_json(jsonable_encoder(progress))
-
-            if progress.is_completed:
-                break
-            await asyncio.sleep(5)
-    except WebSocketDisconnect:
-        return
-
-
-@app.get("/orders/{order_id}/progress-history", response_model=ProgressHistoryResponse)
-async def get_progress_history(order_id: int):
-    """获取制作进度助手历史"""
-    order = db.get_order(order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="订单不存在")
-    history = session_manager.get_progress_history(order_id)
-    return ProgressHistoryResponse(order_id=order_id, history=history)
-
-
-@app.post("/progress/chat", response_model=ProgressChatResponse)
-async def progress_chat_session(payload: ProgressSessionChatRequest):
-    """会话级别的制作进度问答接口"""
-    session_id = payload.session_id.strip()
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id 不能为空")
-    answer, mode, order_id, progress = await _answer_progress_question(
-        session_id=session_id,
-        user_text=payload.question,
-        explicit_order_id=payload.order_id,
-    )
-    return ProgressChatResponse(answer=answer, progress=progress, mode=mode, order_id=order_id)
-
-
-@app.get("/progress/history/{session_id}", response_model=ProgressSessionHistoryResponse)
-async def get_progress_session_history(session_id: str):
-    """获取会话级别的制作进度助手历史"""
-    history = session_manager.get_progress_session_history(session_id)
-    return ProgressSessionHistoryResponse(session_id=session_id, history=history)
 
 
 @app.get("/production/queue")

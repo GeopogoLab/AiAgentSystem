@@ -1,7 +1,7 @@
 """LLM Agent 点单逻辑"""
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from openai import AsyncOpenAI
 from .config import config
 from .models import (
@@ -14,12 +14,14 @@ from .models import (
     ICE_OPTIONS,
     TOPPING_OPTIONS
 )
+from .database import db
+from .production import build_order_progress, build_queue_snapshot
 
 logger = logging.getLogger(__name__)
 
 
 class TeaOrderAgent:
-    """奶茶点单 Agent"""
+    """奶茶点单 Agent（支持 Function Calling）"""
 
     def __init__(self):
         """初始化 Agent"""
@@ -34,12 +36,47 @@ class TeaOrderAgent:
             logger.warning("未配置 OPENROUTER_API_KEY，AI 接待员将使用离线规则引擎。")
             self.client = None
         self.model = config.OPENROUTER_MODEL
+        self.tools = self._build_tools()
+
+    def _build_tools(self) -> List[Dict[str, Any]]:
+        """构建 Function Calling 工具定义"""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_order_status",
+                    "description": "查询指定订单的制作进度和预计完成时间（ETA）",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "order_id": {
+                                "type": "integer",
+                                "description": "订单编号，例如 5 表示订单 #5"
+                            }
+                        },
+                        "required": ["order_id"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_all_orders_queue",
+                    "description": "查看当前所有订单的排队和制作状态，包括各订单的阶段和预计完成时间",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            }
+        ]
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
         menu_list = "\n".join([f"- {item.name}（{item.category}）: {item.description}, ¥{item.base_price}" for item in TEA_MENU])
 
-        return f"""你是一个专业的奶茶店接待员，负责帮助顾客点单。你的任务是：
+        return f"""你是一个专业的奶茶店接待员，负责帮助顾客点单和查询订单进度。你的任务是：
 
 1. **角色定位**：
    - 使用友好、热情的中文与顾客对话
@@ -55,8 +92,15 @@ class TeaOrderAgent:
    - 冰块：{', '.join(ICE_OPTIONS)}
    - 加料：{', '.join(TOPPING_OPTIONS)}
 
-4. **收集信息**：
-   你需要收集以下订单信息：
+4. **工具使用**（重要）：
+   当顾客询问订单进度或排队情况时，你必须调用工具获取实时数据：
+   - 询问具体订单进度时（例如"订单 #5 做好了吗"），调用 get_order_status(order_id)
+   - 询问全局排队情况时（例如"现在队伍排到哪了"），调用 get_all_orders_queue()
+   - 调用工具后，根据返回的数据用自然语言回答顾客
+   - 如果顾客说"我的订单"但没有提供订单号，礼貌询问订单号
+
+5. **收集信息**（点单时）：
+   当顾客要点单时，收集以下订单信息：
    - drink_name: 饮品名称（必须）
    - size: 杯型（必须）
    - sugar: 甜度（必须）
@@ -64,14 +108,16 @@ class TeaOrderAgent:
    - toppings: 加料列表（可选，默认为空）
    - notes: 备注（可选）
 
-5. **对话规则**：
+6. **对话规则**：
+   - 如果顾客询问进度，优先调用工具，不要编造数据
+   - 如果顾客要点单，按照收集信息流程进行
    - 如果顾客说的饮品不在菜单上，礼貌地提示并推荐菜单上的饮品
    - 如果信息不完整，继续询问缺失的字段
    - 如果有歧义，复述确认
    - 当所有必填信息收集齐全时，向顾客总结订单并询问是否确认
    - 顾客确认后，明确表示订单已完成
 
-6. **输出格式**：
+7. **输出格式**：
    你必须返回 JSON 格式，包含三个字段：
    - assistant_reply: 给顾客的回复（中文字符串）
    - order_state: 当前订单状态（JSON 对象）
@@ -182,19 +228,31 @@ class TeaOrderAgent:
                 reason="未配置 OPENROUTER_API_KEY，暂时使用规则引擎协助点单"
             )
 
-        # 调用 OpenAI API
+        # 调用 LLM（支持 Function Calling）
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=config.OPENAI_TEMPERATURE,
-                response_format={"type": "json_object"}  # 强制返回 JSON
+                tools=self.tools,
+                tool_choice="auto"
             )
 
+            message = response.choices[0].message
 
-            # 解析响应
-            result_text = response.choices[0].message.content
-            result = json.loads(result_text)
+            # 处理 Tool Calls
+            if message.tool_calls:
+                return await self._handle_tool_calls(
+                    messages=messages,
+                    tool_calls=message.tool_calls,
+                    current_order_state=current_order_state
+                )
+
+            # 无工具调用，解析正常回复（JSON 格式）
+            if not message.content:
+                raise ValueError("LLM 返回空内容")
+
+            result = json.loads(message.content)
 
             # 构建 AgentResponse
             agent_response = AgentResponse(
@@ -213,6 +271,87 @@ class TeaOrderAgent:
                 current_order_state=current_order_state,
                 reason=f"LLM 调用失败：{str(e)}"
             )
+
+    async def _handle_tool_calls(
+        self,
+        messages: List[Dict[str, Any]],
+        tool_calls: Any,
+        current_order_state: OrderState
+    ) -> AgentResponse:
+        """执行工具调用并获取最终回复"""
+        # 添加 assistant 的工具调用消息
+        messages.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments
+                    }
+                }
+                for tool_call in tool_calls
+            ]
+        })
+
+        # 执行每个工具调用
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+
+            logger.info(f"调用工具: {function_name}，参数: {function_args}")
+
+            # 执行工具
+            result = await self._execute_tool(function_name, function_args)
+
+            # 添加工具结果到消息历史
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "name": function_name,
+                "content": json.dumps(result, ensure_ascii=False)
+            })
+
+        # 让 LLM 根据工具结果生成最终回复
+        final_response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=config.OPENAI_TEMPERATURE,
+            response_format={"type": "json_object"}
+        )
+
+        final_content = final_response.choices[0].message.content
+        if not final_content:
+            raise ValueError("工具调用后 LLM 返回空内容")
+
+        result = json.loads(final_content)
+
+        return AgentResponse(
+            assistant_reply=result["assistant_reply"],
+            order_state=OrderState(**result.get("order_state", current_order_state.model_dump())),
+            action=AgentAction(result.get("action", "ask_more")),
+            mode="online"
+        )
+
+    async def _execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """执行具体工具"""
+        if function_name == "get_order_status":
+            order_id = arguments["order_id"]
+            order = db.get_order(order_id)
+            if not order:
+                return {"error": f"订单 #{order_id} 不存在"}
+            progress = build_order_progress(order)
+            return progress.model_dump()
+
+        elif function_name == "get_all_orders_queue":
+            orders = db.get_recent_orders(50)
+            snapshot = build_queue_snapshot(orders)
+            return snapshot.model_dump()
+
+        else:
+            return {"error": f"未知工具: {function_name}"}
 
     def _build_default_headers(self) -> Dict[str, str]:
         """构建 OpenRouter 默认请求头"""
