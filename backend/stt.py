@@ -1,8 +1,6 @@
 """AssemblyAI 语音转文本服务"""
 import asyncio
 import httpx
-import time
-from typing import Optional
 from .config import config
 
 
@@ -43,7 +41,7 @@ class AssemblyAISTT:
 
             return response.json()["upload_url"]
 
-    async def transcribe(self, audio_url: str, language_code: str = "zh") -> dict:
+    async def transcribe(self, audio_url: str, language_code: str = "en") -> dict:
         """
         转录音频（异步等待结果）
 
@@ -98,7 +96,7 @@ class AssemblyAISTT:
 
             raise Exception("转录超时")
 
-    async def transcribe_file(self, file_path: str, language_code: str = "zh") -> str:
+    async def transcribe_file(self, file_path: str, language_code: str = "en") -> str:
         """
         从本地文件转录音频（完整流程）
 
