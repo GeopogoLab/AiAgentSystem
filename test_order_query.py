@@ -8,11 +8,23 @@ def test_order_query():
     """测试查询不在当前会话中创建的订单"""
 
     # 使用一个新的 session_id，确保订单 #52 不是在这个会话中创建的
-    new_session_id = "test_cross_session_query"
+    new_session_id = "test_cross_session_query_v2"
 
     print("=" * 60)
-    print("测试场景：用户在新会话中询问订单 #52")
+    print("测试场景：用户在新会话中询问订单信息")
     print("=" * 60)
+
+    # 测试0：询问"目前订单有哪些"（用户报告的问题）
+    print("\n【测试0】用户问：目前订单有哪些")
+    response = requests.post(
+        f"{BASE_URL}/text",
+        data={"session_id": new_session_id, "text": "目前订单有哪些"}
+    )
+    if response.ok:
+        data = response.json()
+        print(f"AI回复: {data['assistant_reply']}")
+    else:
+        print(f"请求失败: {response.status_code}")
 
     # 测试1：询问"现在有多少订单"
     print("\n【测试1】用户问：现在有多少订单")
