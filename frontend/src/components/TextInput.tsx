@@ -4,9 +4,10 @@ import { Send } from 'lucide-react';
 interface TextInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
+  placeholder?: string;
 }
 
-export function TextInput({ onSend, disabled }: TextInputProps) {
+export function TextInput({ onSend, disabled, placeholder }: TextInputProps) {
   const [text, setText] = useState('');
 
   const handleSend = () => {
@@ -16,7 +17,7 @@ export function TextInput({ onSend, disabled }: TextInputProps) {
     }
   };
 
-  const handleKeyPress = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -29,8 +30,8 @@ export function TextInput({ onSend, disabled }: TextInputProps) {
         type="text"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyPress={handleKeyPress}
-        placeholder="输入您的需求..."
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder ?? '输入您的需求...'}
         disabled={disabled}
         className="flex-1 rounded-lg border-2 border-gray-200 px-4 py-3 text-sm focus:border-primary-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
       />

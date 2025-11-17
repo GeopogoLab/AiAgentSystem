@@ -2,15 +2,17 @@ import { OrderState } from '../types';
 
 interface OrderInfoProps {
   orderState: OrderState;
+  orderTotal?: number | null;
 }
 
-export function OrderInfo({ orderState }: OrderInfoProps) {
+export function OrderInfo({ orderState, orderTotal }: OrderInfoProps) {
   const hasData =
     orderState.drink_name ||
     orderState.size ||
     orderState.sugar ||
     orderState.ice ||
-    orderState.toppings.length > 0;
+    orderState.toppings.length > 0 ||
+    orderTotal !== undefined;
 
   if (!hasData) {
     return null;
@@ -33,6 +35,9 @@ export function OrderInfo({ orderState }: OrderInfoProps) {
         )}
         {orderState.notes && (
           <OrderItem label="备注" value={orderState.notes} />
+        )}
+        {orderTotal !== undefined && orderTotal !== null && (
+          <OrderItem label="金额" value={`¥${orderTotal.toFixed(2)}`} />
         )}
       </div>
     </div>
