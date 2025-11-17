@@ -95,6 +95,12 @@ def build_order_progress(order: Dict, reference_time: Optional[datetime] = None)
         total_duration_seconds=total_duration,
         is_completed=is_completed,
         timeline=timeline_items,
+        # 订单详情
+        drink_name=order.get("drink_name"),
+        size=order.get("size"),
+        sugar=order.get("sugar"),
+        ice=order.get("ice"),
+        toppings=order.get("toppings", []) if isinstance(order.get("toppings"), list) else [],
     )
 
 

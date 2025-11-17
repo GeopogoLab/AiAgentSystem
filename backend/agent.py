@@ -45,7 +45,7 @@ class TeaOrderAgent:
                 "type": "function",
                 "function": {
                     "name": "get_order_status",
-                    "description": "查询指定订单的制作进度和预计完成时间（ETA）",
+                    "description": "查询指定订单的制作进度、预计完成时间（ETA）和订单详情（饮品名、规格等）",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -62,7 +62,7 @@ class TeaOrderAgent:
                 "type": "function",
                 "function": {
                     "name": "get_all_orders_queue",
-                    "description": "查看当前所有订单的排队和制作状态，包括各订单的阶段和预计完成时间",
+                    "description": "查看当前所有订单的排队和制作状态，包括各订单的编号、阶段、预计完成时间和订单内容（饮品、规格）",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -102,6 +102,7 @@ class TeaOrderAgent:
    - 询问具体订单进度时（例如"订单 #5 做好了吗"、"查一下我的订单"），调用 get_order_status(order_id)
    - 询问全局排队情况时（例如"现在队伍排到哪了"），调用 get_all_orders_queue()
    - 调用工具后，根据返回的数据用自然语言回答顾客
+   - **重要**：工具会返回订单的详细信息（饮品名、规格、加料等），当顾客询问"这个订单是啥"、"订单内容"时，你必须从工具返回的数据中提取并告诉顾客订单的具体内容
    - 如果顾客说"我的订单"但没有提供订单号，且当前 order_state.is_complete=false（正在点单），说明是在询问刚下的订单，礼貌询问订单号
 
 5. **收集信息**（点单时）：
@@ -379,9 +380,15 @@ class TeaOrderAgent:
             "role": "system",
             "content": """基于工具返回的数据，用自然语言回复顾客。
 
+工具返回的数据包含：
+- 订单进度信息（current_stage_label, eta_seconds等）
+- 订单详细内容（drink_name, size, sugar, ice, toppings）
+
+当顾客询问"这个订单是啥"、"订单内容"等问题时，你必须从工具返回的数据中提取并告诉顾客订单的具体内容（饮品名、规格、加料）。
+
 必须返回 JSON 格式：
 {
-    "assistant_reply": "用自然语言描述工具返回的信息，例如订单进度、排队情况等",
+    "assistant_reply": "用自然语言描述工具返回的信息，包括订单进度和订单详细内容（如果顾客询问的话）",
     "order_state": 当前订单状态（如果顾客正在点单则更新，否则保持原状态）,
     "action": "ask_more"（查询进度时默认使用 ask_more）
 }"""

@@ -96,6 +96,12 @@ class OrderProgressResponse(BaseModel):
     timeline: List[ProductionTimelineItem]
     queue_position: Optional[int] = None
     total_orders: Optional[int] = None
+    # 订单详情
+    drink_name: Optional[str] = None
+    size: Optional[str] = None
+    sugar: Optional[str] = None
+    ice: Optional[str] = None
+    toppings: List[str] = Field(default_factory=list)
 
 
 class ProductionQueueSnapshot(BaseModel):
