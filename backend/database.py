@@ -1,7 +1,6 @@
 """SQLite 数据库操作"""
 import sqlite3
 import json
-from datetime import datetime
 from typing import Optional, Dict, Any
 from .config import config
 from .models import OrderState
@@ -23,26 +22,21 @@ class Database:
 
     def init_db(self):
         """初始化数据库表"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        # 创建订单表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                drink_name TEXT NOT NULL,
-                size TEXT,
-                sugar TEXT,
-                ice TEXT,
-                toppings TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        conn.commit()
-        conn.close()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    drink_name TEXT NOT NULL,
+                    size TEXT,
+                    sugar TEXT,
+                    ice TEXT,
+                    toppings TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
     def save_order(self, session_id: str, order_state: OrderState) -> int:
         """
@@ -55,30 +49,31 @@ class Database:
         Returns:
             订单 ID
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        missing_fields = [
+            field for field in ("drink_name", "size", "sugar", "ice")
+            if not getattr(order_state, field)
+        ]
+        if missing_fields:
+            raise ValueError(f"订单信息不完整，缺少字段：{', '.join(missing_fields)}")
 
-        # 将 toppings 列表转为 JSON 字符串
-        toppings_json = json.dumps(order_state.toppings, ensure_ascii=False)
+        toppings_json = json.dumps(order_state.toppings or [], ensure_ascii=False)
 
-        cursor.execute("""
-            INSERT INTO orders (session_id, drink_name, size, sugar, ice, toppings, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session_id,
-            order_state.drink_name,
-            order_state.size,
-            order_state.sugar,
-            order_state.ice,
-            toppings_json,
-            order_state.notes
-        ))
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO orders (session_id, drink_name, size, sugar, ice, toppings, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                order_state.drink_name,
+                order_state.size,
+                order_state.sugar,
+                order_state.ice,
+                toppings_json,
+                order_state.notes
+            ))
 
-        order_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-
-        return order_id
+            return cursor.lastrowid
 
     def get_order(self, order_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -90,18 +85,13 @@ class Database:
         Returns:
             订单信息字典，不存在则返回 None
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
-        row = cursor.fetchone()
-        conn.close()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+            row = cursor.fetchone()
 
         if row:
-            order = dict(row)
-            # 将 toppings JSON 字符串转回列表
-            order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
-            return order
+            return self._serialize_order(row)
 
         return None
 
@@ -115,23 +105,15 @@ class Database:
         Returns:
             订单列表
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM orders WHERE session_id = ? ORDER BY created_at DESC",
+                (session_id,)
+            )
+            rows = cursor.fetchall()
 
-        cursor.execute(
-            "SELECT * FROM orders WHERE session_id = ? ORDER BY created_at DESC",
-            (session_id,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
-            orders.append(order)
-
-        return orders
+        return [self._serialize_order(row) for row in rows]
 
     def get_all_orders(self, limit: int = 100) -> list:
         """
@@ -143,23 +125,41 @@ class Database:
         Returns:
             订单列表
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
 
-        cursor.execute(
-            "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
-            (limit,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        return [self._serialize_order(row) for row in rows]
 
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
-            orders.append(order)
+    def get_recent_orders(self, limit: int = 50) -> list:
+        """
+        获取最近的订单列表
 
-        return orders
+        Args:
+            limit: 返回数量
+
+        Returns:
+            订单列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+
+        return [self._serialize_order(row) for row in rows]
+
+    def _serialize_order(self, row: sqlite3.Row) -> Dict[str, Any]:
+        """将数据库行转换为字典"""
+        order = dict(row)
+        order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
+        return order
 
 
 # 全局数据库实例

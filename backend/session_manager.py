@@ -1,6 +1,6 @@
 """会话状态管理"""
-from typing import Dict, Optional
-from .models import SessionState, OrderState, OrderStatus
+from typing import Dict, Optional, List
+from .models import SessionState, OrderState, OrderStatus, ConversationMessage
 from .config import config
 
 
@@ -10,6 +10,8 @@ class SessionManager:
     def __init__(self):
         """初始化会话管理器"""
         self.sessions: Dict[str, SessionState] = {}
+        self.progress_histories: Dict[int, List[ConversationMessage]] = {}
+        self.progress_sessions: Dict[str, List[ConversationMessage]] = {}
 
     def get_session(self, session_id: str) -> SessionState:
         """
@@ -36,7 +38,7 @@ class SessionManager:
         """
         self.sessions[session_id] = session_state
 
-    def add_message(self, session_id: str, role: str, content: str):
+    def add_message(self, session_id: str, role: str, content: str, mode: str = "online"):
         """
         添加对话消息到历史记录
 
@@ -46,13 +48,42 @@ class SessionManager:
             content: 消息内容
         """
         session = self.get_session(session_id)
-        session.history.append({"role": role, "content": content})
+        session.history.append(ConversationMessage(role=role, content=content, mode=mode))
 
         # 限制历史记录长度
         if len(session.history) > config.MAX_HISTORY_LENGTH * 2:  # 每轮包含 user + assistant
             session.history = session.history[-config.MAX_HISTORY_LENGTH * 2:]
 
         self.update_session(session_id, session)
+
+    def add_progress_message(self, order_id: int, role: str, content: str, mode: str = "online"):
+        """记录制作进度助手对话历史"""
+        history = self.progress_histories.setdefault(order_id, [])
+        history.append(ConversationMessage(role=role, content=content, mode=mode))
+        max_len = config.MAX_HISTORY_LENGTH * 2
+        if len(history) > max_len:
+            self.progress_histories[order_id] = history[-max_len:]
+
+    def get_progress_history(self, order_id: int) -> List[ConversationMessage]:
+        """获取指定订单的进度助手对话历史"""
+        return self.progress_histories.get(order_id, [])
+
+    def add_progress_session_message(self, session_id: str, role: str, content: str, mode: str = "online"):
+        """记录会话级别的进度助手对话历史"""
+        history = self.progress_sessions.setdefault(session_id, [])
+        history.append(ConversationMessage(role=role, content=content, mode=mode))
+        max_len = config.MAX_HISTORY_LENGTH * 2
+        if len(history) > max_len:
+            self.progress_sessions[session_id] = history[-max_len:]
+
+    def get_progress_session_history(self, session_id: str) -> List[ConversationMessage]:
+        """获取会话级别的进度助手对话历史"""
+        return self.progress_sessions.get(session_id, [])
+
+    def reset_progress_session(self, session_id: str):
+        """重置会话级别的进度助手历史"""
+        if session_id in self.progress_sessions:
+            del self.progress_sessions[session_id]
 
     def update_order_state(self, session_id: str, order_state: OrderState):
         """
@@ -86,6 +117,7 @@ class SessionManager:
             session_id: 会话 ID
         """
         self.sessions[session_id] = SessionState(session_id=session_id)
+        self.reset_progress_session(session_id)
 
     def delete_session(self, session_id: str):
         """
@@ -96,6 +128,7 @@ class SessionManager:
         """
         if session_id in self.sessions:
             del self.sessions[session_id]
+        self.reset_progress_session(session_id)
 
     def get_all_sessions(self) -> Dict[str, SessionState]:
         """
