@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WebSocket</title>
+</head>
+<body>
+    <h1>Production Queue WebSocket Test</h1>
+    <div id="status">连接中...</div>
+    <div id="data"></div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:8000/ws/production/queue');
+        const statusDiv = document.getElementById('status');
+        const dataDiv = document.getElementById('data');
+
+        ws.onopen = () => {
+            statusDiv.textContent = '✅ WebSocket 已连接';
+            statusDiv.style.color = 'green';
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const time = new Date().toLocaleTimeString();
+            dataDiv.innerHTML = `
+                <h3>收到更新 @ ${time}</h3>
+                <p>活跃订单数: ${data.active_orders.length}</p>
+                <p>已完成订单数: ${data.completed_orders.length}</p>
+                <p>生成时间: ${data.generated_at}</p>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+        };
+
+        ws.onerror = (error) => {
+            statusDiv.textContent = '❌ WebSocket 错误';
+            statusDiv.style.color = 'red';
+            console.error('WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+            statusDiv.textContent = '⚠️ WebSocket 已关闭';
+            statusDiv.style.color = 'orange';
+        };
+    </script>
+</body>
+</html>

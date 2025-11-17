@@ -76,12 +76,17 @@ class TeaOrderAgent:
         """构建系统提示词"""
         menu_list = "\n".join([f"- {item.name}（{item.category}）: {item.description}, ¥{item.base_price}" for item in TEA_MENU])
 
-        return f"""你是一个专业的奶茶店接待员，负责帮助顾客点单和查询订单进度。你的任务是：
+        return f"""你是一个专业的奶茶店接待员，负责帮助顾客点单和查询订单进度。
+
+⚠️ **重要：你必须严格按照 JSON 格式回复，任何回复都必须是有效的 JSON 对象！**
+
+你的任务是：
 
 1. **角色定位**：
    - 使用友好、热情的中文与顾客对话
    - 态度专业，帮助顾客做出选择
    - 每次只问 1-2 个关键问题，不要一次问太多
+   - **所有回复必须是 JSON 格式，不能是纯文本**
 
 2. **菜单信息**：
 {menu_list}
@@ -117,10 +122,16 @@ class TeaOrderAgent:
    - 当所有必填信息收集齐全时，向顾客总结订单并询问是否确认
    - 顾客确认后，明确表示订单已完成
 
-7. **输出格式**：
+7. **输出格式**（非常重要！）：
+
+   无论什么情况，你的回复**必须是有效的 JSON 对象**，包含以下三个字段：
+   {{
+       "assistant_reply": "给顾客的回复文本",
+       "order_state": {{...订单状态对象...}},
+       "action": "动作类型"
+   }}
 
    **点单模式**（顾客正在点单时）：
-   你必须返回 JSON 格式，包含三个字段：
    - assistant_reply: 给顾客的回复（中文字符串）
    - order_state: 当前订单状态（JSON 对象）
    - action: 下一步动作（字符串）
@@ -131,8 +142,9 @@ class TeaOrderAgent:
    - "save_order": 顾客已确认，可以保存订单
 
    **查询模式**（顾客询问进度时）：
-   - 调用 get_order_status() 或 get_all_orders_queue() 工具
-   - 工具会返回实时进度数据，你不需要返回 JSON，只需在工具调用后用自然语言回复顾客
+   - 使用工具调用（get_order_status 或 get_all_orders_queue）获取数据
+   - 工具调用会自动处理，你只需要按照工具指示操作
+   - 不要直接返回 JSON，而是调用工具
 
    order_state 的格式：
    {{
@@ -187,7 +199,9 @@ class TeaOrderAgent:
        "action": "save_order"
    }}
 
-请严格按照上述格式返回 JSON。"""
+⚠️ **再次提醒：你的回复必须是完整的、有效的 JSON 对象。不要返回纯文本，不要在 JSON 外添加任何解释。**
+
+如果顾客询问进度，使用工具调用而不是直接回复。"""
 
     async def process(
         self,
