@@ -24,15 +24,15 @@ class TestSessionManager:
     def test_get_existing_session(self, manager):
         """测试获取已存在的会话"""
         # 第一次获取
-        session1 = manager.get_session("test_session_2")
-        session1.history.append({"role": "user", "content": "你好"})
+        session_id = "test_session_2"
+        manager.add_message(session_id, "user", "你好")
 
         # 第二次获取
-        session2 = manager.get_session("test_session_2")
+        session2 = manager.get_session(session_id)
 
-        assert session2.session_id == "test_session_2"
+        assert session2.session_id == session_id
         assert len(session2.history) == 1
-        assert session2.history[0]["content"] == "你好"
+        assert session2.history[0].content == "你好"
 
     def test_add_message(self, manager):
         """测试添加消息"""
@@ -44,10 +44,10 @@ class TestSessionManager:
         session = manager.get_session(session_id)
 
         assert len(session.history) == 2
-        assert session.history[0]["role"] == "user"
-        assert session.history[0]["content"] == "我要奶茶"
-        assert session.history[1]["role"] == "assistant"
-        assert session.history[1]["content"] == "好的"
+        assert session.history[0].role == "user"
+        assert session.history[0].content == "我要奶茶"
+        assert session.history[1].role == "assistant"
+        assert session.history[1].content == "好的"
 
     def test_update_order_state(self, manager):
         """测试更新订单状态"""
@@ -94,6 +94,7 @@ class TestSessionManager:
         assert len(session.history) == 0
         assert session.order_state.drink_name is None
         assert session.status == OrderStatus.COLLECTING
+        assert session.last_order_total is None
 
     def test_delete_session(self, manager):
         """测试删除会话"""
@@ -133,6 +134,31 @@ class TestSessionManager:
 
         # 应该只保留最新的20条消息（10轮）
         assert len(session.history) == 20
+
+    def test_progress_history(self, manager):
+        """测试进度助手历史"""
+        order_id = 42
+        manager.add_progress_message(order_id, "user", "多久好？")
+        manager.add_progress_message(order_id, "assistant", "约两分钟", mode="online")
+
+        history = manager.get_progress_history(order_id)
+        assert len(history) == 2
+        assert history[0].role == "user"
+        assert history[1].mode == "online"
+
+    def test_progress_session_history(self, manager):
+        """测试进度助手会话历史"""
+        session_id = "progress_session"
+        manager.add_progress_session_message(session_id, "user", "你好")
+        manager.add_progress_session_message(session_id, "assistant", "请提供订单号", mode="offline")
+
+        history = manager.get_progress_session_history(session_id)
+        assert len(history) == 2
+        assert history[0].content == "你好"
+        assert history[1].mode == "offline"
+
+        manager.reset_progress_session(session_id)
+        assert manager.get_progress_session_history(session_id) == []
 
 
 if __name__ == '__main__':

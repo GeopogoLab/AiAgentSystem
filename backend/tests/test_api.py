@@ -2,6 +2,8 @@
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.database import db
+from backend.models import OrderState
 
 
 class TestAPI:
@@ -68,6 +70,70 @@ class TestAPI:
         assert data["message"] == "会话已重置"
         assert data["session_id"] == session_id
 
+    def test_order_status_and_progress_chat(self, client):
+        """制作进度接口"""
+        order_state = OrderState(
+            drink_name="乌龙奶茶",
+            size="大杯",
+            sugar="三分糖",
+            ice="少冰",
+            toppings=[],
+            is_complete=True,
+        )
+        order_id = db.save_order("status_test", order_state)
+
+        status_resp = client.get(f"/orders/{order_id}/status")
+        assert status_resp.status_code == 200
+        status_data = status_resp.json()
+        assert status_data["order_id"] == order_id
+
+        chat_resp = client.post(
+            f"/orders/{order_id}/progress-chat",
+            json={"question": "还要多久？"},
+        )
+        assert chat_resp.status_code == 200
+        chat_data = chat_resp.json()
+        assert "orders" not in chat_data
+        assert chat_data["progress"]["order_id"] == order_id
+        history_resp = client.get(f"/orders/{order_id}/progress-history")
+        assert history_resp.status_code == 200
+        history_data = history_resp.json()
+        assert history_data["order_id"] == order_id
+        assert len(history_data["history"]) == 2
+        assert history_data["history"][0]["role"] == "user"
+        queue_resp = client.get("/production/queue")
+        assert queue_resp.status_code == 200
+        queue_data = queue_resp.json()
+        assert "active_orders" in queue_data
+
+    def test_progress_chat_session_endpoint(self, client):
+        """会话级别进度助手"""
+        session_id = "progress_session_test"
+        order_state = OrderState(
+            drink_name="红茶拿铁",
+            size="中杯",
+            sugar="七分糖",
+            ice="正常冰",
+            toppings=["珍珠"],
+            is_complete=True,
+        )
+        order_id = db.save_order("progress_session", order_state)
+
+        resp = client.post(
+            "/progress/chat",
+            json={"session_id": session_id, "question": f"订单 #{order_id} 还有多久？"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["order_id"] == order_id
+        assert data["answer"]
+
+        history_resp = client.get(f"/progress/history/{session_id}")
+        assert history_resp.status_code == 200
+        history_data = history_resp.json()
+        assert history_data["session_id"] == session_id
+        assert len(history_data["history"]) == 2
+
     def test_text_endpoint_without_api_key(self, client):
         """测试文本端点（无有效API key）"""
         response = client.post(
@@ -97,6 +163,18 @@ class TestAPI:
 
         # CORS应该允许跨域请求
         assert "access-control-allow-origin" in [h.lower() for h in response.headers.keys()]
+
+    def test_tts_without_api_key(self, client):
+        """TTS 未配置 key"""
+        from backend.config import config
+
+        prev_key = config.ASSEMBLYAI_API_KEY
+        config.ASSEMBLYAI_API_KEY = ""
+        try:
+            response = client.post("/tts", json={"text": "hello"})
+            assert response.status_code == 400
+        finally:
+            config.ASSEMBLYAI_API_KEY = prev_key
 
 
 if __name__ == '__main__':
