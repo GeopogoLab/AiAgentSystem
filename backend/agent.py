@@ -337,18 +337,20 @@ class TeaOrderAgent:
 
     async def _execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """执行具体工具"""
+        from fastapi.encoders import jsonable_encoder
+
         if function_name == "get_order_status":
             order_id = arguments["order_id"]
             order = db.get_order(order_id)
             if not order:
                 return {"error": f"订单 #{order_id} 不存在"}
             progress = build_order_progress(order)
-            return progress.model_dump()
+            return jsonable_encoder(progress)
 
         elif function_name == "get_all_orders_queue":
             orders = db.get_recent_orders(50)
             snapshot = build_queue_snapshot(orders)
-            return snapshot.model_dump()
+            return jsonable_encoder(snapshot)
 
         else:
             return {"error": f"未知工具: {function_name}"}
