@@ -5,7 +5,6 @@ import { OrderInfo } from './components/OrderInfo';
 import { ModeSelector } from './components/ModeSelector';
 import { TextInput } from './components/TextInput';
 import { VoiceInput } from './components/VoiceInput';
-import { ProgressAgent } from './components/ProgressAgent';
 import { ProductionBoard } from './components/ProductionBoard';
 import { ApiService } from './services/api';
 import { generateSessionId } from './services/utils';
@@ -235,7 +234,6 @@ function App() {
         {/* Right Column */}
         <div className="w-full max-w-md space-y-6 lg:sticky lg:top-6">
           <ProductionBoard snapshot={queueSnapshot} activeOrderId={activeOrderId} />
-          <ProgressAgent sessionId={sessionId} activeOrderId={activeOrderId} queueSnapshot={queueSnapshot} />
         </div>
       </div>
     </div>

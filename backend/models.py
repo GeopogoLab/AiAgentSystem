@@ -111,39 +111,6 @@ class ProductionQueueSnapshot(BaseModel):
     active_orders: List[OrderProgressResponse]
     completed_orders: List[OrderProgressResponse]
 
-class ProgressChatRequest(BaseModel):
-    """进度问答请求（订单上下文）"""
-    question: str
-    session_id: Optional[str] = None
-
-
-class ProgressSessionChatRequest(BaseModel):
-    """进度问答请求（会话上下文）"""
-    session_id: str
-    question: str
-    order_id: Optional[int] = None
-
-
-class ProgressChatResponse(BaseModel):
-    """进度问答响应"""
-    answer: str
-    progress: Optional[OrderProgressResponse] = None
-    mode: str = "online"
-    order_id: Optional[int] = None
-
-
-class ProgressHistoryResponse(BaseModel):
-    """进度助手历史（订单）"""
-    order_id: int
-    history: List[ConversationMessage]
-
-
-class ProgressSessionHistoryResponse(BaseModel):
-    """进度助手历史（会话）"""
-    session_id: str
-    history: List[ConversationMessage]
-
-
 class TTSRequest(BaseModel):
     """文本转语音请求"""
     text: str

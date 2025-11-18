@@ -55,23 +55,6 @@ export interface OrderProgress {
   total_orders?: number | null;
 }
 
-export interface ProgressChatResponse {
-  answer: string;
-  progress?: OrderProgress | null;
-  mode?: 'online' | 'offline';
-  order_id?: number | null;
-}
-
-export interface ProgressHistoryResponse {
-  order_id: number;
-  history: Message[];
-}
-
-export interface ProgressSessionHistoryResponse {
-  session_id: string;
-  history: Message[];
-}
-
 export interface ProductionQueueSnapshot {
   generated_at: string;
   active_orders: OrderProgress[];
