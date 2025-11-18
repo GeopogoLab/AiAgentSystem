@@ -23,6 +23,10 @@ class Config:
     # AssemblyAI
     ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2"
     ASSEMBLYAI_TTS_VOICE = os.getenv("ASSEMBLYAI_TTS_VOICE", "alloy")
+    ASSEMBLYAI_STREAMING_URL = os.getenv("ASSEMBLYAI_STREAMING_URL", "wss://streaming.assemblyai.com/v3/ws")
+    ASSEMBLYAI_STREAMING_SAMPLE_RATE = int(os.getenv("ASSEMBLYAI_STREAMING_SAMPLE_RATE", "16000"))
+    ASSEMBLYAI_STREAMING_ENCODING = os.getenv("ASSEMBLYAI_STREAMING_ENCODING", "pcm_s16le")
+    ASSEMBLYAI_STREAMING_MODEL = os.getenv("ASSEMBLYAI_STREAMING_MODEL", "universal-streaming-english")
 
     # LLM Provider (OpenRouter 默认)
     OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

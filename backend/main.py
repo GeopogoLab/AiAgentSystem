@@ -1,16 +1,21 @@
 """FastAPI 后端主服务"""
 import asyncio
+import base64
+import binascii
 from contextlib import asynccontextmanager
 import json
 from datetime import datetime
 import math
 import re
+from typing import Optional
+from urllib.parse import urlencode
+
 import aiohttp
 import httpx
 from fastapi import FastAPI, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
-from typing import Optional
+from starlette.websockets import WebSocketState
 
 from .config import config
 from .models import (
@@ -397,12 +402,27 @@ async def realtime_stt_ws(websocket: WebSocket):
         await websocket.close()
         return
 
-    assembly_uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+    params = {
+        "sample_rate": config.ASSEMBLYAI_STREAMING_SAMPLE_RATE,
+        "encoding": config.ASSEMBLYAI_STREAMING_ENCODING,
+        "speech_model": config.ASSEMBLYAI_STREAMING_MODEL,
+    }
+    assembly_uri = f"{config.ASSEMBLYAI_STREAMING_URL}?{urlencode(params)}"
     headers = {
         "Authorization": config.ASSEMBLYAI_API_KEY,
         "Accept": "application/json",
     }
     session_id = websocket.query_params.get("session_id")
+
+    async def send_client(payload: dict):
+        if websocket.client_state != WebSocketState.CONNECTED:
+            return
+        try:
+            await websocket.send_json(payload)
+        except WebSocketDisconnect:
+            pass
+        except RuntimeError:
+            pass
 
     async def forward_client(to_ws: aiohttp.ClientWebSocketResponse):
         try:
@@ -410,12 +430,16 @@ async def realtime_stt_ws(websocket: WebSocket):
                 message = await websocket.receive_text()
                 payload = json.loads(message)
                 if payload.get("event") == "flush":
-                    await to_ws.send_json({"terminate_session": True})
                     await to_ws.close()
                     break
                 audio_data = payload.get("audio_data")
                 if audio_data:
-                    await to_ws.send_json({"audio_data": audio_data})
+                    try:
+                        audio_bytes = base64.b64decode(audio_data)
+                    except (ValueError, binascii.Error):
+                        continue
+                    if audio_bytes:
+                        await to_ws.send_bytes(audio_bytes)
         except WebSocketDisconnect:
             await to_ws.close()
 
@@ -426,58 +450,87 @@ async def realtime_stt_ws(websocket: WebSocket):
         async def safe_process():
             try:
                 response = await _process_text(session_id, text)
-                await websocket.send_json({
+                await send_client({
                     "message_type": "agent_response",
                     "payload": jsonable_encoder(response),
                 })
             except HTTPException as exc:
-                await websocket.send_json({
+                await send_client({
                     "message_type": "agent_response_error",
                     "detail": exc.detail,
                 })
             except Exception as exc:
-                await websocket.send_json({
+                await send_client({
                     "message_type": "agent_response_error",
                     "detail": str(exc),
                 })
 
         asyncio.create_task(safe_process())
 
+    processed_turns: set[int] = set()
+
     async def forward_assembly(from_ws: aiohttp.ClientWebSocketResponse):
         try:
             async for msg in from_ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    await websocket.send_text(msg.data)
-                    if not session_id:
-                        continue
                     try:
                         data = json.loads(msg.data)
                     except json.JSONDecodeError:
+                        await send_client({"message_type": "assembly_raw", "payload": msg.data})
                         continue
-                    if data.get("message_type") == "final_transcript" and data.get("text"):
-                        await dispatch_agent_response(data["text"])
+                    data_type = data.get("type")
+                    if data_type == "Begin":
+                        await send_client({
+                            "message_type": "assembly_session",
+                            "session_id": data.get("id"),
+                            "expires_at": data.get("expires_at"),
+                        })
+                        continue
+                    if data_type == "Termination":
+                        await send_client({
+                            "message_type": "assembly_termination",
+                            "reason": data.get("reason"),
+                        })
+                        continue
+                    if data_type != "Turn":
+                        await send_client({"message_type": "assembly_raw", "payload": data})
+                        continue
+
+                    transcript = data.get("transcript") or ""
+                    if transcript:
+                        await send_client({"message_type": "partial_transcript", "text": transcript})
+
+                    turn_order = data.get("turn_order")
+                    final_text = (data.get("utterance") or transcript or "").strip()
+                    if (
+                        data.get("end_of_turn")
+                        and final_text
+                        and turn_order is not None
+                        and turn_order not in processed_turns
+                    ):
+                        processed_turns.add(turn_order)
+                        await send_client({"message_type": "final_transcript", "text": final_text})
+                        await dispatch_agent_response(final_text)
                 elif msg.type == aiohttp.WSMsgType.BINARY:
                     await websocket.send_bytes(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
                     break
         except WebSocketDisconnect:
             pass
 
-    aiohttp_session = aiohttp.ClientSession()
     try:
-        async with aiohttp_session.ws_connect(assembly_uri, headers=headers, heartbeat=15) as assembly_ws:
-            await asyncio.gather(
-                forward_client(assembly_ws),
-                forward_assembly(assembly_ws),
-            )
+        async with aiohttp.ClientSession() as aiohttp_session:
+            async with aiohttp_session.ws_connect(assembly_uri, headers=headers, heartbeat=15) as assembly_ws:
+                await asyncio.gather(
+                    forward_client(assembly_ws),
+                    forward_assembly(assembly_ws),
+                )
     except asyncio.CancelledError:
         raise
     except aiohttp.ClientError as exc:
-        await websocket.send_json({"error": f"连接 AssemblyAI 失败: {exc}"})
+        await send_client({"error": f"连接 AssemblyAI 失败: {exc}"})
     except Exception as exc:
-        await websocket.send_json({"error": str(exc)})
-    finally:
-        await aiohttp_session.close()
+        await send_client({"error": str(exc)})
 
 
 # 如果需要服务前端静态文件

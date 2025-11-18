@@ -186,4 +186,4 @@ tailwindcss + shadcn
 - **2025-11-16**：前端 UI 统一采用黑白灰配色与玻璃拟态质感，首屏必须展示 Session / Model / Mode 芯片及排队统计，互动组件需带轻量动画反馈（按钮波纹、状态呼吸灯等），并在每次 Tailwind + shadcn 调整后保持文本/语音入口与生产看板的版式一致。
 - **2025-11-16**：订单保存后必须返回结构化 `order_metadata`（含 session_id 与 placed_at），所有生产队列与进度查询 API 统一输出该时间戳，并同步写入 SessionManager 的 progress/会话历史，确保前端 AI 工具可以播报真实下单时间。
 - **2025-11-16**：语音模式统一通过 `/ws/stt?session_id=` WebSocket 回路传输（含 AssemblyAI partial/final transcript、TalkResponse），前端不得再用 HTTP 提交语音结果，需实时展示识别文本与 Agent 回复；后端 final transcript 必须触发 `_process_text` 并将结果 `agent_response` 下行。
-- **2025-11-17**：AssemblyAI 实时转写代理必须通过 `aiohttp.ClientSession.ws_connect` 管理外部连接并发送 JSON，后端捕获 `aiohttp.ClientError` 时需直接向前端推送结构化错误信息，严禁继续使用 `websockets.extra_headers` 这类与旧运行环境不兼容的调用方式。
+- **2025-11-17**：AssemblyAI Universal Streaming 必须通过 `aiohttp.ClientSession.ws_connect` 连接 `wss://streaming.assemblyai.com/v3/ws`，向服务端发送二进制 PCM16 音频并把 `Turn` 消息映射成现有的 `partial/final_transcript` 事件；所有错误走结构化 JSON 提示，客户端断线后不得继续写 socket。
