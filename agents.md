@@ -189,3 +189,4 @@ tailwindcss + shadcn
 - **2025-11-16**：后台 `backstage-frontend` 必须保持黑白玻璃风格，通过 `/ws/production/queue` 实时监听并以轮询兜底，新订单需自动弹窗列出制作清单，手动确认后才可关闭。
 - **2025-11-17**：AssemblyAI Universal Streaming 必须通过 `aiohttp.ClientSession.ws_connect` 连接 `wss://streaming.assemblyai.com/v3/ws`，向服务端发送二进制 PCM16 音频并把 `Turn` 消息映射成现有的 `partial/final_transcript` 事件；所有错误走结构化 JSON 提示，客户端断线后不得继续写 socket。
 - **2025-11-17**：SessionManager 必须缓存最新成功下单的 `OrderState` 与 `order_metadata`，`SAVE_ORDER` 前先比对快照，完全一致的重复请求直接复用原订单号并提示“无需重复提交”，严禁再写库。
+- **2025-11-17**：TTS 模块默认用 AssemblyAI，若 `TTS_PROVIDER=gtts` 或未配置 API Key 则自动回退到 gTTS，本地产生 Base64 音频，禁止在无声 demo 场景下抛 500。

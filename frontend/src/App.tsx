@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Clock4, RotateCcw } from 'lucide-react';
 import { ChatContainer } from './components/ChatContainer';
 import { OrderInfo } from './components/OrderInfo';
@@ -34,6 +34,8 @@ const ORDER_STATUS_MESSAGES: Record<OrderStatus, string> = {
   [OrderStatus.SAVED]: '订单已保存，稍等片刻即可取餐',
 };
 const MODEL_BADGE = import.meta.env.VITE_MODEL_BADGE ?? 'OpenRouter · Llama 3.3 70B';
+const ENABLE_AUTO_TTS =
+  (import.meta.env.VITE_ENABLE_AUTO_TTS ?? 'false').toString().toLowerCase() === 'true';
 
 function App() {
   const [sessionId] = useState(() => generateSessionId());
@@ -52,6 +54,8 @@ function App() {
   const [orderMeta, setOrderMeta] = useState<OrderMetadata | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueSnapshot, setQueueSnapshot] = useState<ProductionQueueSnapshot | null>(null);
+  const spokenTextRef = useRef<string | null>(null);
+  const autoAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const queueMetrics = useMemo(() => {
     const activeCount = queueSnapshot?.active_orders?.length ?? 0;
@@ -157,6 +161,7 @@ function App() {
     return () => {
       closed = true;
       ws?.close();
+      autoAudioRef.current?.pause();
     };
   }, []);
 
@@ -197,6 +202,57 @@ function App() {
     applyAgentResponse(response);
     setIsProcessing(false);
   };
+
+  useEffect(() => {
+    if (!ENABLE_AUTO_TTS || mode !== 'voice') {
+      spokenTextRef.current = null;
+      autoAudioRef.current?.pause();
+      return;
+    }
+    const text = lastAssistantMessage?.trim();
+    if (!text) {
+      return;
+    }
+    if (spokenTextRef.current === text) {
+      return;
+    }
+    spokenTextRef.current = text;
+    let cancelled = false;
+
+    const speak = async () => {
+      try {
+        const data = await ApiService.requestTTS(text);
+        const src =
+          data.audio_url ??
+          (data.audio_base64 ? `data:audio/${data.format ?? 'mp3'};base64,${data.audio_base64}` : null);
+        if (!src || cancelled) {
+          return;
+        }
+        autoAudioRef.current?.pause();
+        const audio = new Audio(src);
+        autoAudioRef.current = audio;
+        audio.onended = () => {
+          if (autoAudioRef.current === audio) {
+            autoAudioRef.current = null;
+          }
+        };
+        audio.onerror = () => {
+          console.error('Auto TTS 播放失败');
+        };
+        await audio.play();
+      } catch (error) {
+        if (!cancelled) {
+          console.error('自动 TTS 失败', error);
+        }
+      }
+    };
+
+    speak();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, lastAssistantMessage]);
 
   const handleRealtimeVoiceError = (detail: string) => {
     setStatus(detail || '语音处理失败');

@@ -27,6 +27,9 @@ class Config:
     ASSEMBLYAI_STREAMING_SAMPLE_RATE = int(os.getenv("ASSEMBLYAI_STREAMING_SAMPLE_RATE", "16000"))
     ASSEMBLYAI_STREAMING_ENCODING = os.getenv("ASSEMBLYAI_STREAMING_ENCODING", "pcm_s16le")
     ASSEMBLYAI_STREAMING_MODEL = os.getenv("ASSEMBLYAI_STREAMING_MODEL", "universal-streaming-english")
+    TTS_PROVIDER = os.getenv("TTS_PROVIDER", "assemblyai").lower()
+    GTTS_LANGUAGE = os.getenv("GTTS_LANGUAGE", "zh-CN")
+    GTTS_SLOW = os.getenv("GTTS_SLOW", "false").lower() == "true"
 
     # LLM Provider (OpenRouter 默认)
     OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
