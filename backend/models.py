@@ -53,6 +53,8 @@ class SessionState(BaseModel):
     last_order_id: Optional[int] = None
     last_order_total: Optional[float] = None
     order_history: List[int] = Field(default_factory=list)  # 订单ID历史列表
+    last_saved_order_state: Optional[OrderState] = None
+    last_order_metadata: Optional["OrderMetadata"] = None
 
 
 class TalkRequest(BaseModel):

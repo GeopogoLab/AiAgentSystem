@@ -26,6 +26,7 @@ from .models import (
     OrderProgressResponse,
     TTSRequest,
     TTSResponse,
+    OrderState,
     OrderMetadata,
     ProgressChatRequest,
     ProgressSessionRequest,
@@ -71,6 +72,19 @@ def _load_queue_snapshot(limit: int = 50, include_order: Optional[int] = None):
         if extra:
             orders.append(extra)
     return build_queue_snapshot(orders)
+
+
+def _build_order_metadata_snapshot(session_id: str, order_id: int) -> OrderMetadata:
+    saved_order = db.get_order(order_id)
+    placed_source = (
+        saved_order.get("created_at_iso") or saved_order.get("created_at")
+        if saved_order else None
+    )
+    if placed_source:
+        placed_at = parse_timestamp(placed_source)
+    else:
+        placed_at = datetime.utcnow()
+    return OrderMetadata(order_id=order_id, session_id=session_id, placed_at=placed_at)
 
 
 def _format_progress_answer(order_id: int, progress: OrderProgressResponse) -> str:
@@ -169,38 +183,53 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
     order_metadata: Optional[OrderMetadata] = None
 
     if agent_response.action == AgentAction.SAVE_ORDER:
-        # 保存订单到数据库
-        try:
-            order_id = db.save_order(session_id, agent_response.order_state)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        session_manager.update_status(session_id, OrderStatus.SAVED)
-        current_session.last_order_id = order_id
-        total = calculate_order_total(agent_response.order_state)
-        current_session.last_order_total = total
-        order_total = total
-
-        saved_order = db.get_order(order_id)
-        placed_source = (
-            saved_order.get("created_at_iso") or saved_order.get("created_at")
-            if saved_order else None
+        existing_snapshot = current_session.last_saved_order_state
+        is_duplicate = (
+            current_session.status == OrderStatus.SAVED
+            and current_session.last_order_id is not None
+            and existing_snapshot is not None
+            and agent_response.order_state.model_dump() == existing_snapshot.model_dump()
         )
-        if placed_source:
-            placed_at = parse_timestamp(placed_source)
+
+        if is_duplicate:
+            order_id = current_session.last_order_id
+            order_total = current_session.last_order_total
+            order_metadata = current_session.last_order_metadata
+            if not order_metadata and order_id is not None:
+                order_metadata = _build_order_metadata_snapshot(session_id, order_id)
+                current_session.last_order_metadata = order_metadata
+
+            agent_response.assistant_reply = (
+                f"订单 #{order_id} 已保存，无需重复提交。如需新的订单请告诉我新的饮品需求。"
+            )
+            agent_response.order_state = existing_snapshot.model_copy(deep=True)
+            session_manager.update_status(session_id, OrderStatus.SAVED)
+            session_manager.update_order_state(session_id, OrderState())
         else:
-            placed_at = datetime.utcnow()
-        order_metadata = OrderMetadata(order_id=order_id, session_id=session_id, placed_at=placed_at)
+            # 保存订单到数据库
+            try:
+                order_id = db.save_order(session_id, agent_response.order_state)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
-        # 在回复中添加订单号
-        agent_response.assistant_reply += f" 订单号：#{order_id}"
+            session_manager.update_status(session_id, OrderStatus.SAVED)
+            current_session.last_order_id = order_id
+            total = calculate_order_total(agent_response.order_state)
+            current_session.last_order_total = total
+            order_total = total
 
-        # 添加订单到历史记录，并自动清理超过 5 个订单的对话历史
-        session_manager.add_order_to_history(session_id, order_id, max_orders=5)
+            order_metadata = _build_order_metadata_snapshot(session_id, order_id)
+            current_session.last_saved_order_state = agent_response.order_state.model_copy(deep=True)
+            current_session.last_order_metadata = order_metadata
 
-        # 重置 order_state，避免后续被重复保存
-        from .models import OrderState
-        session_manager.update_order_state(session_id, OrderState())
+            # 在回复中添加订单号
+            agent_response.assistant_reply += f" 订单号：#{order_id}"
+
+            # 添加订单到历史记录，并自动清理超过 5 个订单的对话历史
+            session_manager.add_order_to_history(session_id, order_id, max_orders=5)
+
+            # 重置 order_state，避免后续被重复保存
+            session_manager.update_order_state(session_id, OrderState())
 
     elif agent_response.action == AgentAction.CONFIRM:
         session_manager.update_status(session_id, OrderStatus.CONFIRMING)
