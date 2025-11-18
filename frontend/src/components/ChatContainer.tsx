@@ -19,7 +19,9 @@ export function ChatContainer({ messages }: ChatContainerProps) {
   return (
     <div
       ref={containerRef}
-      className="h-[400px] overflow-y-auto rounded-lg border-2 border-gray-200 bg-gray-50 p-5"
+      role="log"
+      aria-live="polite"
+      className="h-[420px] space-y-4 overflow-y-auto pr-2 scroll-smooth"
     >
       {messages.map((message, index) => (
         <Message key={index} message={message} />

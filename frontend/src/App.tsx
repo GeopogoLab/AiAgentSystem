@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Activity, Clock4, RotateCcw } from 'lucide-react';
 import { ChatContainer } from './components/ChatContainer';
 import { OrderInfo } from './components/OrderInfo';
 import { ModeSelector } from './components/ModeSelector';
@@ -15,6 +15,7 @@ import {
   OrderStatus,
   TalkResponse,
   ProductionQueueSnapshot,
+  OrderMetadata,
 } from './types';
 
 const createInitialOrderState = (): OrderState => ({
@@ -48,8 +49,42 @@ function App() {
   const [status, setStatus] = useState<string>('');
   const [activeOrderId, setActiveOrderId] = useState<number | null>(null);
   const [orderTotal, setOrderTotal] = useState<number | null>(null);
+  const [orderMeta, setOrderMeta] = useState<OrderMetadata | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueSnapshot, setQueueSnapshot] = useState<ProductionQueueSnapshot | null>(null);
+
+  const queueMetrics = useMemo(() => {
+    const activeCount = queueSnapshot?.active_orders?.length ?? 0;
+    const completed = queueSnapshot?.completed_orders?.length ?? 0;
+    const nextOrder = queueSnapshot?.active_orders?.[0];
+    return {
+      active: activeCount,
+      completed,
+      eta: nextOrder?.eta_seconds
+        ? `${Math.max(1, Math.ceil(nextOrder.eta_seconds / 60))} min`
+        : nextOrder
+          ? '准备中'
+          : '—',
+      stageLabel: nextOrder?.current_stage_label ?? '等待更新',
+    };
+  }, [queueSnapshot]);
+
+  const sessionHash = sessionId.slice(-6).toUpperCase();
+  const latestMode = messages[messages.length - 1]?.mode ?? 'online';
+  const statusMessage = status || '等待您的下一条指令';
+  const lastAssistantMessage = [...messages].reverse().find((msg) => msg.role === 'assistant')?.content;
+
+  const heroChips = [
+    { label: 'SESSION', value: `#${sessionHash}` },
+    { label: 'MODEL', value: MODEL_BADGE },
+    { label: 'MODE', value: latestMode === 'offline' ? '离线安全回退' : '在线实时' },
+  ];
+
+  const statBlocks = [
+    { label: '排队中', value: queueMetrics.active.toString().padStart(2, '0'), hint: 'Active orders' },
+    { label: '今日完成', value: queueMetrics.completed.toString().padStart(2, '0'), hint: 'Served drinks' },
+    { label: '下一杯', value: queueMetrics.eta, hint: queueMetrics.stageLabel },
+  ];
 
   const getStatusMessage = (response: TalkResponse) => {
     const totalText =
@@ -74,6 +109,9 @@ function App() {
     setStatus(getStatusMessage(response));
     if (response.order_total !== undefined) {
       setOrderTotal(response.order_total ?? null);
+    }
+    if (response.order_metadata !== undefined) {
+      setOrderMeta(response.order_metadata ?? null);
     }
     if (response.order_id) {
       setActiveOrderId(response.order_id);
@@ -122,11 +160,14 @@ function App() {
     };
   }, []);
 
+  const appendUserMessage = (text: string) => {
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+  };
+
   const handleSendText = async (text: string) => {
     if (!text.trim() || isProcessing) return;
 
-    // 添加用户消息
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    appendUserMessage(text);
     setStatus('正在处理...');
     setIsProcessing(true);
 
@@ -145,6 +186,22 @@ function App() {
     }
   };
 
+  const handleRealtimeVoiceUserText = (text: string) => {
+    if (!text.trim()) return;
+    appendUserMessage(text);
+    setStatus('语音识别完成，正在处理...');
+    setIsProcessing(true);
+  };
+
+  const handleRealtimeVoiceResponse = (response: TalkResponse) => {
+    applyAgentResponse(response);
+    setIsProcessing(false);
+  };
+
+  const handleRealtimeVoiceError = (detail: string) => {
+    setStatus(detail || '语音处理失败');
+    setIsProcessing(false);
+  };
 
   const handleReset = async () => {
     if (!confirm('确定要重新开始吗？当前订单信息将被清除。')) {
@@ -154,7 +211,6 @@ function App() {
     try {
       await ApiService.resetSession(sessionId);
 
-      // 重置状态
       setMessages([
         {
           role: 'assistant',
@@ -165,6 +221,7 @@ function App() {
       setOrderState(createInitialOrderState());
       setActiveOrderId(null);
       setOrderTotal(null);
+      setOrderMeta(null);
       setStatus('会话已重置');
       setTimeout(() => setStatus(''), 2000);
     } catch (error) {
@@ -174,65 +231,132 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-6 lg:flex-row">
-        {/* Left Column */}
+    <div className="min-h-screen bg-gradient-to-b from-ink-950 via-black to-ink-950 text-ink-100">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-10 lg:flex-row lg:px-8">
         <div className="flex flex-1 flex-col gap-6">
-          <div className="rounded-2xl bg-gradient-to-r from-primary-500 to-secondary-500 p-6 text-white shadow-lg">
-            <div className="text-sm uppercase tracking-wide opacity-80">茶茶智能门店</div>
-            <h1 className="mt-2 text-3xl font-bold">茶饮 AI 接待台</h1>
-            <p className="mt-1 text-sm opacity-80">语音或文字下单，实时了解制作进度</p>
-            <div className="mt-3 inline-flex items-center rounded-full border border-white/40 bg-white/10 px-4 py-1 text-xs">
-              Powered by {MODEL_BADGE}
+          <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-ink-900/90 via-black/80 to-ink-900/60 p-8 shadow-card">
+            <div className="pointer-events-none absolute inset-0 opacity-40">
+              <div className="h-full w-full bg-grid-light bg-[size:60px_60px]" />
             </div>
-          </div>
-
-          <div className="grow rounded-2xl bg-white p-6 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-primary-600">AI 接待员</h2>
-                <p className="text-sm text-gray-500">自然对话即可完成点单</p>
+            <div className="relative space-y-6">
+              <div className="flex flex-wrap gap-2 text-[10px] font-medium uppercase tracking-[0.4em] text-ink-400">
+                {heroChips.map((chip, idx) => (
+                  <span
+                    key={chip.label}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-ink-200 transition-all duration-300 hover:bg-white/10 hover:border-white/30 hover:scale-110 animate-slide-up"
+                    style={{ animationDelay: `${idx * 0.05}s` }}
+                  >
+                    {chip.label}: {chip.value}
+                  </span>
+                ))}
               </div>
-              <button
-                onClick={handleReset}
-                disabled={isProcessing}
-                className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 shadow-sm transition hover:border-primary-200 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <RotateCcw className="h-4 w-4" />
-                重新开始
-              </button>
+
+              <div className="animate-slide-up">
+                <p className="text-xs uppercase tracking-[0.4em] text-ink-400">茶茶智能门店</p>
+                <h1 className="mt-2 text-4xl font-semibold text-white transition-all duration-300 hover:tracking-wider">黑白格调 · AI 接待台</h1>
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-300">
+                  统一的黑白灰界面，结合语音、文本与实时制作看板，保持零色差的极简体验，随时切换在线 / 离线模式。
+                </p>
+              </div>
+
+              <div className="grid gap-3 text-sm sm:grid-cols-3">
+                {statBlocks.map((stat, idx) => (
+                  <div
+                    key={stat.label}
+                    className="group relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 px-4 py-3 shadow-glow transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:scale-105 animate-bounce-in"
+                    style={{ animationDelay: `${idx * 0.1}s` }}
+                  >
+                    <div className="text-[10px] uppercase tracking-[0.5em] text-ink-400">{stat.label}</div>
+                    <div className="mt-2 text-3xl font-semibold text-white">{stat.value}</div>
+                    <div className="text-xs text-ink-400">{stat.hint}</div>
+                    <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent opacity-0 transition duration-500 group-hover:opacity-100" />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 text-sm text-ink-400">
+                <span className="inline-flex items-center gap-2 text-ink-200 animate-pulse-glow">
+                  <Activity className="h-4 w-4 text-white" />
+                  实时同步制作队列
+                </span>
+                <button
+                  onClick={handleReset}
+                  disabled={isProcessing}
+                  className="group inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/40 px-4 py-2 text-xs uppercase tracking-[0.4em] text-ink-200 transition-all duration-300 hover:-translate-y-1 hover:border-white/40 hover:shadow-lg hover:scale-105 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reset
+                  <span className="sr-only">重置</span>
+                </button>
+              </div>
             </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <ChatContainer messages={messages} />
+          </section>
+
+          <section className="rounded-[32px] border border-white/10 bg-black/40 p-6 shadow-glow">
+            <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-ink-400">AI Concierge</p>
+                <h2 className="mt-1 text-2xl font-semibold text-white">自然对话，快速下单</h2>
+                <p className="text-sm text-ink-400">语音 / 文字双输入，自动跟进订单状态。</p>
+              </div>
+              <div className="text-xs text-ink-500">
+                队列刷新：{queueSnapshot ? new Date(queueSnapshot.generated_at).toLocaleTimeString() : '—'}
+              </div>
             </div>
-            <div className="mt-4">
-              <ModeSelector mode={mode} onModeChange={setMode} />
-              <div className="mt-3 min-h-[100px]">
-                {mode === 'text' ? (
-                  <TextInput onSend={handleSendText} disabled={isProcessing} />
-                ) : (
-              <VoiceInput
-                onTranscript={(text) => handleSendText(text)}
-                disabled={isProcessing}
-              />
-            )}
-          </div>
-              {status && (
-                <div className="mt-2 rounded-lg bg-primary-50 px-3 py-2 text-sm text-primary-700">
-                  {status}
+
+            <div className="relative rounded-3xl border border-white/10 bg-black/30 p-5 shadow-inner">
+              <div className={mode === 'voice' ? 'pointer-events-none blur-sm opacity-40 transition duration-300' : 'transition duration-300'}>
+                <ChatContainer messages={messages} />
+              </div>
+              {mode === 'voice' && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <VoiceInput
+                    sessionId={sessionId}
+                    disabled={isProcessing}
+                    onRealtimeUserText={handleRealtimeVoiceUserText}
+                    onAgentResponse={handleRealtimeVoiceResponse}
+                    onRealtimeError={handleRealtimeVoiceError}
+                    onFallbackTranscript={(text) => handleSendText(text)}
+                    assistantPreview={lastAssistantMessage ?? null}
+                  />
                 </div>
               )}
             </div>
-          </div>
 
-          <div className="rounded-2xl bg-white p-6 shadow-lg">
-            <h2 className="mb-4 text-xl font-semibold text-primary-600">当前订单</h2>
-            <OrderInfo orderState={orderState} orderTotal={orderTotal} />
-          </div>
+            <div className="mt-6 space-y-4">
+              <ModeSelector mode={mode} onModeChange={setMode} />
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+                {mode === 'text' ? (
+                  <TextInput onSend={handleSendText} disabled={isProcessing} />
+                ) : (
+                  <p className="text-center text-sm text-ink-400">语音模式已开启，使用上方浮层中的按钮即可控制开始 / 暂停。</p>
+                )}
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-gradient-to-r from-white/10 to-transparent px-4 py-3 text-sm text-ink-200">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.4em] text-ink-400">
+                  <Clock4 className="h-4 w-4" />
+                  实时状态
+                </div>
+                <p className="mt-1 text-base text-white">{statusMessage}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[32px] border border-white/10 bg-black/40 p-6 shadow-glow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-ink-400">订单快照</p>
+                <h2 className="mt-2 text-2xl font-semibold text-white">当前订单</h2>
+              </div>
+              {activeOrderId && (
+                <div className="text-xs uppercase tracking-[0.4em] text-ink-400">#{activeOrderId}</div>
+              )}
+            </div>
+            <OrderInfo orderState={orderState} orderTotal={orderTotal} orderMeta={orderMeta} />
+          </section>
         </div>
 
-        {/* Right Column */}
-        <div className="w-full max-w-md space-y-6 lg:sticky lg:top-6">
+        <div className="w-full max-w-md space-y-6 lg:sticky lg:top-8">
           <ProductionBoard snapshot={queueSnapshot} activeOrderId={activeOrderId} />
         </div>
       </div>
