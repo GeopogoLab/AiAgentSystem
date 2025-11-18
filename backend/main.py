@@ -3,6 +3,7 @@ import asyncio
 import base64
 import binascii
 from contextlib import asynccontextmanager
+import io
 import json
 from datetime import datetime
 import math
@@ -15,6 +16,11 @@ import httpx
 from fastapi import FastAPI, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
+# gTTS 为可选依赖，demo 模式用
+try:
+    from gtts import gTTS  # type: ignore
+except ImportError:  # pragma: no cover
+    gTTS = None
 from starlette.websockets import WebSocketState
 
 from .config import config
@@ -85,6 +91,50 @@ def _build_order_metadata_snapshot(session_id: str, order_id: int) -> OrderMetad
     else:
         placed_at = datetime.utcnow()
     return OrderMetadata(order_id=order_id, session_id=session_id, placed_at=placed_at)
+
+
+async def _synthesize_with_gtts(text: str, voice: Optional[str] = None) -> TTSResponse:
+    """使用 gTTS 生成语音"""
+    if gTTS is None:
+        raise HTTPException(status_code=500, detail="gTTS 未安装，请运行 pip install gTTS")
+    lang = config.GTTS_LANGUAGE
+    if voice:
+        # 允许 voice 改写 lang，例如 "en" / "zh-CN"
+        lang = voice
+
+    loop = asyncio.get_running_loop()
+
+    def _render() -> str:
+        tts = gTTS(text=text, lang=lang, slow=config.GTTS_SLOW)
+        buffer = io.BytesIO()
+        tts.write_to_fp(buffer)
+        buffer.seek(0)
+        return base64.b64encode(buffer.read()).decode("utf-8")
+
+    audio_base64 = await loop.run_in_executor(None, _render)
+    return TTSResponse(
+        audio_base64=audio_base64,
+        voice=lang,
+        format="mp3",
+    )
+
+
+def _order_state_signature(order_state: OrderState) -> tuple:
+    """提取订单状态的核心字段签名用于重复检测"""
+    def normalize(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    toppings = sorted(normalize(item) for item in (order_state.toppings or []))
+    return (
+        normalize(order_state.drink_name),
+        normalize(order_state.size),
+        normalize(order_state.sugar),
+        normalize(order_state.ice),
+        tuple(toppings),
+        normalize(order_state.notes),
+    )
 
 
 def _format_progress_answer(order_id: int, progress: OrderProgressResponse) -> str:
@@ -184,11 +234,13 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
 
     if agent_response.action == AgentAction.SAVE_ORDER:
         existing_snapshot = current_session.last_saved_order_state
+        existing_signature = _order_state_signature(existing_snapshot) if existing_snapshot else None
+        incoming_signature = _order_state_signature(agent_response.order_state)
         is_duplicate = (
             current_session.status == OrderStatus.SAVED
             and current_session.last_order_id is not None
             and existing_snapshot is not None
-            and agent_response.order_state.model_dump() == existing_snapshot.model_dump()
+            and existing_signature == incoming_signature
         )
 
         if is_duplicate:
@@ -390,11 +442,22 @@ async def production_queue_ws(websocket: WebSocket):
 
 @app.post("/tts", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest):
-    """AssemblyAI 文本转语音"""
-    if not config.ASSEMBLYAI_API_KEY:
-        raise HTTPException(status_code=400, detail="ASSEMBLYAI_API_KEY 未配置")
+    """文本转语音（AssemblyAI 或 gTTS）"""
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="缺少文本内容")
+
+    use_gtts = config.TTS_PROVIDER == "gtts" or not config.ASSEMBLYAI_API_KEY
+    if use_gtts:
+        try:
+            return await _synthesize_with_gtts(text, request.voice)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"gTTS 请求失败: {exc}")
+
     voice = request.voice or config.ASSEMBLYAI_TTS_VOICE or "alloy"
-    payload = {"text": request.text, "voice": voice, "format": "mp3"}
+    payload = {"text": text, "voice": voice, "format": "mp3"}
     headers = {
         "authorization": config.ASSEMBLYAI_API_KEY,
         "content-type": "application/json",
