@@ -8,28 +8,32 @@ interface ModeSelectorProps {
 
 export function ModeSelector({ mode, onModeChange }: ModeSelectorProps) {
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-2 rounded-full border border-white/15 bg-black/40 p-1">
       <button
+        type="button"
+        aria-pressed={mode === 'text'}
         onClick={() => onModeChange('text')}
-        className={`flex flex-1 items-center justify-center gap-2 rounded-lg border-2 py-3 font-medium transition-all ${
+        className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition duration-300 ${
           mode === 'text'
-            ? 'border-primary-500 bg-primary-500 text-white'
-            : 'border-primary-500 bg-white text-primary-500 hover:bg-primary-50'
+            ? 'bg-white text-ink-900 shadow-lg'
+            : 'text-ink-300 hover:text-white'
         }`}
       >
-        <MessageSquare className="h-5 w-5" />
-        文字模式
+        <MessageSquare className="h-4 w-4" />
+        文字
       </button>
       <button
+        type="button"
+        aria-pressed={mode === 'voice'}
         onClick={() => onModeChange('voice')}
-        className={`flex flex-1 items-center justify-center gap-2 rounded-lg border-2 py-3 font-medium transition-all ${
+        className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition duration-300 ${
           mode === 'voice'
-            ? 'border-primary-500 bg-primary-500 text-white'
-            : 'border-primary-500 bg-white text-primary-500 hover:bg-primary-50'
+            ? 'bg-white text-ink-900 shadow-lg'
+            : 'text-ink-300 hover:text-white'
         }`}
       >
-        <Mic className="h-5 w-5" />
-        语音模式
+        <Mic className="h-4 w-4" />
+        语音
       </button>
     </div>
   );

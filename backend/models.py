@@ -1,5 +1,4 @@
 """数据模型定义"""
-from __future__ import annotations
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -38,20 +37,36 @@ class OrderState(BaseModel):
     is_complete: bool = False  # 是否信息完整
 
 
+class ConversationMessage(BaseModel):
+    """通用对话消息"""
+    role: str
+    content: str
+    mode: str = "online"
+
+
 class SessionState(BaseModel):
     """会话状态"""
     session_id: str
-    history: List["ConversationMessage"] = Field(default_factory=list)
+    history: List[ConversationMessage] = Field(default_factory=list)
     order_state: OrderState = Field(default_factory=OrderState)
     status: OrderStatus = OrderStatus.COLLECTING
     last_order_id: Optional[int] = None
     last_order_total: Optional[float] = None
     order_history: List[int] = Field(default_factory=list)  # 订单ID历史列表
+    last_saved_order_state: Optional[OrderState] = None
+    last_order_metadata: Optional["OrderMetadata"] = None
 
 
 class TalkRequest(BaseModel):
     """语音对话请求"""
     session_id: str
+
+
+class OrderMetadata(BaseModel):
+    """订单元信息"""
+    order_id: int
+    session_id: str
+    placed_at: datetime
 
 
 class TalkResponse(BaseModel):
@@ -62,6 +77,7 @@ class TalkResponse(BaseModel):
     order_id: Optional[int] = None  # 订单保存后返回 ID
     reply_mode: str = "online"
     order_total: Optional[float] = None
+    order_metadata: Optional[OrderMetadata] = None
 
 
 class AgentResponse(BaseModel):
@@ -71,12 +87,6 @@ class AgentResponse(BaseModel):
     action: AgentAction
     mode: str = "online"
 
-
-class ConversationMessage(BaseModel):
-    """通用对话消息"""
-    role: str
-    content: str
-    mode: str = "online"
 
 class ProductionTimelineItem(BaseModel):
     """制作流程节点"""
@@ -89,6 +99,7 @@ class ProductionTimelineItem(BaseModel):
 class OrderProgressResponse(BaseModel):
     """订单制作进度"""
     order_id: int
+    placed_at: datetime
     current_stage: ProductionStage
     current_stage_label: str
     eta_seconds: Optional[int] = None
@@ -103,6 +114,17 @@ class OrderProgressResponse(BaseModel):
     sugar: Optional[str] = None
     ice: Optional[str] = None
     toppings: List[str] = Field(default_factory=list)
+
+
+class ProgressChatRequest(BaseModel):
+    """订单级别制作进度询问"""
+    question: str
+
+
+class ProgressSessionRequest(BaseModel):
+    """会话级制作进度询问"""
+    session_id: str
+    question: str
 
 
 class ProductionQueueSnapshot(BaseModel):

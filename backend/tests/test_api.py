@@ -165,16 +165,22 @@ class TestAPI:
         assert "access-control-allow-origin" in [h.lower() for h in response.headers.keys()]
 
     def test_tts_without_api_key(self, client):
-        """TTS 未配置 key"""
+        """TTS 未配置 key 时自动使用 gTTS"""
         from backend.config import config
 
         prev_key = config.ASSEMBLYAI_API_KEY
+        prev_provider = config.TTS_PROVIDER
         config.ASSEMBLYAI_API_KEY = ""
+        config.TTS_PROVIDER = "gtts"
         try:
-            response = client.post("/tts", json={"text": "hello"})
-            assert response.status_code == 400
+            response = client.post("/tts", json={"text": "hello world"})
+            assert response.status_code == 200
+            data = response.json()
+            assert data["audio_base64"]
+            assert data["format"] == "mp3"
         finally:
             config.ASSEMBLYAI_API_KEY = prev_key
+            config.TTS_PROVIDER = prev_provider
 
 
 if __name__ == '__main__':
