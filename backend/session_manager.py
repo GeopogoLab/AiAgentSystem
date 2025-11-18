@@ -10,6 +10,8 @@ class SessionManager:
     def __init__(self):
         """初始化会话管理器"""
         self.sessions: Dict[str, SessionState] = {}
+        self.progress_histories: Dict[int, List[ConversationMessage]] = {}
+        self.progress_session_histories: Dict[str, List[ConversationMessage]] = {}
 
     def get_session(self, session_id: str) -> SessionState:
         """
@@ -105,6 +107,35 @@ class SessionManager:
             所有会话的字典
         """
         return self.sessions
+
+    # --- 制作进度助手 ---
+
+    def add_progress_message(self, order_id: int, role: str, content: str, mode: str = "online"):
+        """记录某个订单的进度助手对话"""
+        history = self.progress_histories.setdefault(order_id, [])
+        history.append(ConversationMessage(role=role, content=content, mode=mode))
+        if len(history) > config.MAX_HISTORY_LENGTH:
+            self.progress_histories[order_id] = history[-config.MAX_HISTORY_LENGTH:]
+
+    def get_progress_history(self, order_id: int) -> List[ConversationMessage]:
+        """获取订单进度助手历史"""
+        return self.progress_histories.get(order_id, [])
+
+    def add_progress_session_message(self, session_id: str, role: str, content: str, mode: str = "online"):
+        """记录制作进度助手的会话级对话"""
+        history = self.progress_session_histories.setdefault(session_id, [])
+        history.append(ConversationMessage(role=role, content=content, mode=mode))
+        if len(history) > config.MAX_HISTORY_LENGTH:
+            self.progress_session_histories[session_id] = history[-config.MAX_HISTORY_LENGTH:]
+
+    def get_progress_session_history(self, session_id: str) -> List[ConversationMessage]:
+        """获取会话级进度助手历史"""
+        return self.progress_session_histories.get(session_id, [])
+
+    def reset_progress_session(self, session_id: str):
+        """清理会话级进度助手历史"""
+        if session_id in self.progress_session_histories:
+            del self.progress_session_histories[session_id]
 
     def add_order_to_history(self, session_id: str, order_id: int, max_orders: int = 5):
         """

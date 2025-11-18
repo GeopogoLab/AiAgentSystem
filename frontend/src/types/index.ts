@@ -31,6 +31,13 @@ export interface TalkResponse {
   order_id?: number;
   reply_mode?: 'online' | 'offline';
   order_total?: number | null;
+  order_metadata?: OrderMetadata | null;
+}
+
+export interface OrderMetadata {
+  order_id: number;
+  session_id: string;
+  placed_at: string;
 }
 
 export type ProductionStage = 'queued' | 'brewing' | 'sealing' | 'ready';
@@ -45,6 +52,7 @@ export interface ProductionTimelineItem {
 
 export interface OrderProgress {
   order_id: number;
+  placed_at: string;
   current_stage: ProductionStage;
   current_stage_label: string;
   eta_seconds?: number | null;

@@ -1,15 +1,32 @@
 import { Mic } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { TalkResponse } from '../types';
 
 interface VoiceInputProps {
-  onTranscript?: (text: string) => void;
+  sessionId: string;
   disabled?: boolean;
+  useRealtime?: boolean;
+  onFallbackTranscript?: (text: string) => void;
+  onRealtimeUserText?: (text: string) => void;
+  onAgentResponse?: (response: TalkResponse) => void;
+  onRealtimeError?: (message: string) => void;
+  assistantPreview?: string | null;
 }
 
-export function VoiceInput({ onTranscript, disabled }: VoiceInputProps) {
+export function VoiceInput({
+  sessionId,
+  disabled,
+  useRealtime = true,
+  onFallbackTranscript,
+  onRealtimeUserText,
+  onAgentResponse,
+  onRealtimeError,
+  assistantPreview,
+}: VoiceInputProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState('');
+  const [lastRecognized, setLastRecognized] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -33,6 +50,7 @@ export function VoiceInput({ onTranscript, disabled }: VoiceInputProps) {
     wsRef.current = null;
     setIsRecording(false);
     setPartial('');
+    setLastRecognized('');
   };
 
   const startStreaming = async () => {
@@ -49,7 +67,9 @@ export function VoiceInput({ onTranscript, disabled }: VoiceInputProps) {
       const wsBase = apiBase.replace(/^http/i, (match) =>
         match.toLowerCase() === 'https' ? 'wss' : 'ws'
       );
-      const ws = new WebSocket(`${wsBase.replace(/\/$/, '')}/ws/stt`);
+      const ws = new WebSocket(
+        `${wsBase.replace(/\/$/, '')}/ws/stt?session_id=${encodeURIComponent(sessionId)}`
+      );
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -60,11 +80,24 @@ export function VoiceInput({ onTranscript, disabled }: VoiceInputProps) {
             stopStreaming();
             return;
           }
+          if (data.message_type === 'agent_response_error' && data.detail) {
+            onRealtimeError?.(data.detail);
+            return;
+          }
+          if (data.message_type === 'agent_response' && data.payload) {
+            onAgentResponse?.(data.payload as TalkResponse);
+            return;
+          }
           if (data.message_type === 'partial_transcript') {
             setPartial(data.text || '');
           } else if (data.message_type === 'final_transcript' && data.text) {
             setPartial('');
-            onTranscript?.(data.text);
+            setLastRecognized(data.text);
+            if (useRealtime) {
+              onRealtimeUserText?.(data.text);
+            } else {
+              onFallbackTranscript?.(data.text);
+            }
           }
         } catch (err) {
           console.error('Failed to parse STT message', err);
@@ -115,33 +148,63 @@ export function VoiceInput({ onTranscript, disabled }: VoiceInputProps) {
     };
   }, []);
 
+  const waveformBars = Array.from({ length: 14 });
+  const userDisplay = partial || lastRecognized || (isRecording ? '正在监听…' : '点击开始讲话');
+
   return (
-    <div className="flex flex-col items-center gap-4">
-      <button
-        onClick={handleRecordClick}
-        disabled={disabled}
-        className={`flex h-20 w-20 items-center justify-center rounded-full text-white transition-all ${
-          isRecording
-            ? 'animate-pulse bg-red-600 hover:bg-red-700'
-            : 'bg-red-500 hover:scale-110 hover:bg-red-600'
-        } disabled:cursor-not-allowed disabled:bg-gray-300 disabled:hover:scale-100`}
-      >
-        <Mic className="h-8 w-8" />
-      </button>
-
-      <div className="text-center text-sm text-gray-600">
-        {isRecording ? '实时识别中，点击停止' : '点击按钮开始实时语音'}
-      </div>
-
-      {partial && (
-        <div className="rounded-xl bg-gray-50 px-4 py-2 text-sm text-gray-700">
-          {partial}
+    <div className="relative flex h-[420px] w-full flex-col overflow-hidden rounded-3xl border border-white/20 bg-black/60 text-white">
+      <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/10 opacity-70" />
+      <div className="absolute inset-0 backdrop-blur-2xl" />
+      <div className="relative z-10 flex h-full flex-col justify-between p-6">
+        <div className="flex w-full flex-col gap-3 text-sm text-ink-200 sm:flex-row sm:items-start sm:justify-between">
+          <div className="max-w-[45%]">
+            <p className="text-[10px] uppercase tracking-[0.5em] text-ink-500">LLM</p>
+            <p className="mt-1 text-base leading-relaxed text-ink-100">
+              {assistantPreview || '等待语音提问'}
+            </p>
+          </div>
+          <div className="max-w-[45%] text-right">
+            <p className="text-[10px] uppercase tracking-[0.5em] text-ink-500">USER</p>
+            <p className="mt-1 text-base leading-relaxed text-white">
+              {userDisplay}
+            </p>
+          </div>
         </div>
-      )}
 
-      {error && (
-        <div className="text-sm text-red-600">{error}</div>
-      )}
+        <div className="flex flex-col items-center gap-6">
+          <div className="flex h-20 w-full items-end justify-center gap-1">
+            {waveformBars.map((_, index) => (
+              <span
+                key={index}
+                className={`w-1 rounded-full bg-white/60 ${isRecording ? 'origin-bottom animate-voiceWave' : 'opacity-30'}`}
+                style={{ animationDelay: `${index * 0.08}s` }}
+              />
+            ))}
+          </div>
+
+          <button
+            onClick={handleRecordClick}
+            disabled={disabled}
+            className={`group relative flex h-28 w-28 items-center justify-center rounded-full border border-white/20 text-white shadow-2xl transition duration-300 ${
+              isRecording ? 'bg-white text-black' : 'bg-white/10 hover:-translate-y-1'
+            } disabled:cursor-not-allowed disabled:opacity-30`}
+          >
+            <Mic className={`h-10 w-10 ${isRecording ? 'text-black' : 'text-white'}`} />
+            <span className="absolute -bottom-8 text-xs uppercase tracking-[0.5em] text-ink-400">
+              {isRecording ? 'PAUSE' : 'START'}
+            </span>
+            {isRecording && <span className="absolute inset-0 rounded-full border border-white/40 animate-pulseRing" />}
+          </button>
+
+          <div className="text-center text-sm text-ink-400">
+            {error
+              ? error
+              : isRecording
+                ? '实时识别中 · 再次点击可暂停'
+                : '点击上方按钮开始实时语音'}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

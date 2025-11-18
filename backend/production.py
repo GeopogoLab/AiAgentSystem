@@ -10,6 +10,7 @@ from .models import (
     ProductionStage,
     ProductionQueueSnapshot,
 )
+from .time_utils import parse_timestamp
 
 STAGE_DEFINITIONS = [
     {"stage": ProductionStage.QUEUED, "label": "排队中", "duration": 30},
@@ -19,23 +20,13 @@ STAGE_DEFINITIONS = [
 ]
 
 
-def _parse_datetime(value: str) -> datetime:
-    """解析 SQLite 时间戳"""
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-    raise ValueError(f"无法解析时间戳: {value}")
-
-
 def build_order_progress(order: Dict, reference_time: Optional[datetime] = None) -> OrderProgressResponse:
     """根据订单创建时间计算制作进度"""
     created_at = order.get("created_at")
     if not created_at:
         raise ValueError("订单缺少 created_at 字段")
 
-    order_created_at = created_at if isinstance(created_at, datetime) else _parse_datetime(created_at)
+    order_created_at = parse_timestamp(created_at)
     now = reference_time or datetime.utcnow()
     elapsed = max(0, (now - order_created_at).total_seconds())
 
@@ -89,6 +80,7 @@ def build_order_progress(order: Dict, reference_time: Optional[datetime] = None)
 
     return OrderProgressResponse(
         order_id=order["id"],
+        placed_at=order_created_at,
         current_stage=current_stage,
         current_stage_label=current_label,
         eta_seconds=remaining_seconds if not is_completed else None,
@@ -117,7 +109,7 @@ def build_queue_snapshot(orders: List[Dict], reference_time: Optional[datetime] 
     # 使用降序排列，确保最新的订单在前面
     sorted_orders = sorted(
         orders,
-        key=lambda order: _parse_datetime(order["created_at"]) if isinstance(order.get("created_at"), str) else order.get("created_at", now),
+        key=lambda order: parse_timestamp(order["created_at"]) if order.get("created_at") else now,
         reverse=True
     )
     progress_map: Dict[int, OrderProgressResponse] = {}

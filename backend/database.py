@@ -2,8 +2,10 @@
 import sqlite3
 import json
 from typing import Optional, Dict, Any
+from datetime import datetime
 from .config import config
 from .models import OrderState
+from .time_utils import parse_timestamp
 
 
 class Database:
@@ -159,6 +161,11 @@ class Database:
         """将数据库行转换为字典"""
         order = dict(row)
         order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
+        created_at = order.get('created_at')
+        if created_at:
+            dt = parse_timestamp(created_at)
+            order['created_at'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+            order['created_at_iso'] = dt.isoformat()
         return order
 
 

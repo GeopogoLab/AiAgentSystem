@@ -1,13 +1,27 @@
 """FastAPI 后端主服务"""
 import asyncio
+import base64
+import binascii
 from contextlib import asynccontextmanager
+import io
 import json
-import websockets
+from datetime import datetime
+import math
+import re
+from typing import Optional
+from urllib.parse import urlencode
+
+import aiohttp
 import httpx
 from fastapi import FastAPI, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
-from typing import Optional
+# gTTS 为可选依赖，demo 模式用
+try:
+    from gtts import gTTS  # type: ignore
+except ImportError:  # pragma: no cover
+    gTTS = None
+from starlette.websockets import WebSocketState
 
 from .config import config
 from .models import (
@@ -18,12 +32,17 @@ from .models import (
     OrderProgressResponse,
     TTSRequest,
     TTSResponse,
+    OrderState,
+    OrderMetadata,
+    ProgressChatRequest,
+    ProgressSessionRequest,
 )
 from .database import db
 from .session_manager import session_manager
 from .agent import tea_agent
 from .production import build_order_progress, build_queue_snapshot, find_progress_in_snapshot
 from .pricing import calculate_order_total
+from .time_utils import parse_timestamp
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,6 +78,85 @@ def _load_queue_snapshot(limit: int = 50, include_order: Optional[int] = None):
         if extra:
             orders.append(extra)
     return build_queue_snapshot(orders)
+
+
+def _build_order_metadata_snapshot(session_id: str, order_id: int) -> OrderMetadata:
+    saved_order = db.get_order(order_id)
+    placed_source = (
+        saved_order.get("created_at_iso") or saved_order.get("created_at")
+        if saved_order else None
+    )
+    if placed_source:
+        placed_at = parse_timestamp(placed_source)
+    else:
+        placed_at = datetime.utcnow()
+    return OrderMetadata(order_id=order_id, session_id=session_id, placed_at=placed_at)
+
+
+async def _synthesize_with_gtts(text: str, voice: Optional[str] = None) -> TTSResponse:
+    """使用 gTTS 生成语音"""
+    if gTTS is None:
+        raise HTTPException(status_code=500, detail="gTTS 未安装，请运行 pip install gTTS")
+    lang = config.GTTS_LANGUAGE
+    if voice:
+        # 允许 voice 改写 lang，例如 "en" / "zh-CN"
+        lang = voice
+
+    loop = asyncio.get_running_loop()
+
+    def _render() -> str:
+        tts = gTTS(text=text, lang=lang, slow=config.GTTS_SLOW)
+        buffer = io.BytesIO()
+        tts.write_to_fp(buffer)
+        buffer.seek(0)
+        return base64.b64encode(buffer.read()).decode("utf-8")
+
+    audio_base64 = await loop.run_in_executor(None, _render)
+    return TTSResponse(
+        audio_base64=audio_base64,
+        voice=lang,
+        format="mp3",
+    )
+
+
+def _order_state_signature(order_state: OrderState) -> tuple:
+    """提取订单状态的核心字段签名用于重复检测"""
+    def normalize(value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    toppings = sorted(normalize(item) for item in (order_state.toppings or []))
+    return (
+        normalize(order_state.drink_name),
+        normalize(order_state.size),
+        normalize(order_state.sugar),
+        normalize(order_state.ice),
+        tuple(toppings),
+        normalize(order_state.notes),
+    )
+
+
+def _format_progress_answer(order_id: int, progress: OrderProgressResponse) -> str:
+    """生成制作进度的自然语言描述"""
+    stage = progress.current_stage_label
+    if progress.eta_seconds:
+        eta_minutes = max(1, math.ceil(progress.eta_seconds / 60))
+        eta_text = f"预计 {eta_minutes} 分钟后完成"
+    else:
+        eta_text = "现在即可取餐"
+    return f"订单 #{order_id} 当前处于{stage}阶段，{eta_text}。"
+
+
+def _extract_order_id_from_text(text: str) -> Optional[int]:
+    """从文本中提取订单号"""
+    match = re.search(r"#?(\d+)", text or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 @app.get("/")
@@ -132,29 +230,58 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
     current_session = session_manager.get_session(session_id)
     order_total = current_session.last_order_total
     order_id = None
+    order_metadata: Optional[OrderMetadata] = None
 
     if agent_response.action == AgentAction.SAVE_ORDER:
-        # 保存订单到数据库
-        try:
-            order_id = db.save_order(session_id, agent_response.order_state)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        existing_snapshot = current_session.last_saved_order_state
+        existing_signature = _order_state_signature(existing_snapshot) if existing_snapshot else None
+        incoming_signature = _order_state_signature(agent_response.order_state)
+        is_duplicate = (
+            current_session.status == OrderStatus.SAVED
+            and current_session.last_order_id is not None
+            and existing_snapshot is not None
+            and existing_signature == incoming_signature
+        )
 
-        session_manager.update_status(session_id, OrderStatus.SAVED)
-        current_session.last_order_id = order_id
-        total = calculate_order_total(agent_response.order_state)
-        current_session.last_order_total = total
-        order_total = total
+        if is_duplicate:
+            order_id = current_session.last_order_id
+            order_total = current_session.last_order_total
+            order_metadata = current_session.last_order_metadata
+            if not order_metadata and order_id is not None:
+                order_metadata = _build_order_metadata_snapshot(session_id, order_id)
+                current_session.last_order_metadata = order_metadata
 
-        # 在回复中添加订单号
-        agent_response.assistant_reply += f" 订单号：#{order_id}"
+            agent_response.assistant_reply = (
+                f"订单 #{order_id} 已保存，无需重复提交。如需新的订单请告诉我新的饮品需求。"
+            )
+            agent_response.order_state = existing_snapshot.model_copy(deep=True)
+            session_manager.update_status(session_id, OrderStatus.SAVED)
+            session_manager.update_order_state(session_id, OrderState())
+        else:
+            # 保存订单到数据库
+            try:
+                order_id = db.save_order(session_id, agent_response.order_state)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
-        # 添加订单到历史记录，并自动清理超过 5 个订单的对话历史
-        session_manager.add_order_to_history(session_id, order_id, max_orders=5)
+            session_manager.update_status(session_id, OrderStatus.SAVED)
+            current_session.last_order_id = order_id
+            total = calculate_order_total(agent_response.order_state)
+            current_session.last_order_total = total
+            order_total = total
 
-        # 重置 order_state，避免后续被重复保存
-        from .models import OrderState
-        session_manager.update_order_state(session_id, OrderState())
+            order_metadata = _build_order_metadata_snapshot(session_id, order_id)
+            current_session.last_saved_order_state = agent_response.order_state.model_copy(deep=True)
+            current_session.last_order_metadata = order_metadata
+
+            # 在回复中添加订单号
+            agent_response.assistant_reply += f" 订单号：#{order_id}"
+
+            # 添加订单到历史记录，并自动清理超过 5 个订单的对话历史
+            session_manager.add_order_to_history(session_id, order_id, max_orders=5)
+
+            # 重置 order_state，避免后续被重复保存
+            session_manager.update_order_state(session_id, OrderState())
 
     elif agent_response.action == AgentAction.CONFIRM:
         session_manager.update_status(session_id, OrderStatus.CONFIRMING)
@@ -172,6 +299,7 @@ async def _process_text(session_id: str, user_text: str) -> TalkResponse:
         order_id=order_id,
         reply_mode=agent_response.mode,
         order_total=order_total,
+        order_metadata=order_metadata,
     )
 
 
@@ -196,6 +324,80 @@ async def get_session(session_id: str):
     """查询会话状态"""
     session = session_manager.get_session(session_id)
     return session.model_dump()
+
+
+@app.post("/orders/{order_id}/progress-chat")
+async def order_progress_chat(order_id: int, payload: ProgressChatRequest):
+    """针对指定订单的制作进度问答"""
+    order = db.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    session_manager.add_progress_message(order_id, "user", payload.question)
+    progress = build_order_progress(order)
+    answer = _format_progress_answer(order_id, progress)
+    session_manager.add_progress_message(order_id, "assistant", answer)
+    return {
+        "order_id": order_id,
+        "progress": progress,
+        "answer": answer,
+    }
+
+
+@app.get("/orders/{order_id}/progress-history")
+async def get_order_progress_history(order_id: int):
+    """获取指定订单的进度助手历史"""
+    history = session_manager.get_progress_history(order_id)
+    return {
+        "order_id": order_id,
+        "history": [message.model_dump() for message in history],
+    }
+
+
+@app.post("/progress/chat")
+async def progress_chat(payload: ProgressSessionRequest):
+    """面向生产助手的自然语言查询接口"""
+    session_manager.add_progress_session_message(payload.session_id, "user", payload.question)
+    order_id = _extract_order_id_from_text(payload.question)
+    if not order_id:
+        answer = "请提供有效的订单号（例如：订单 #123）。"
+        session_manager.add_progress_session_message(payload.session_id, "assistant", answer, mode="offline")
+        return {
+            "session_id": payload.session_id,
+            "order_id": None,
+            "answer": answer,
+        }
+
+    order = db.get_order(order_id)
+    if not order:
+        answer = f"未找到订单 #{order_id}，请确认编号。"
+        session_manager.add_progress_session_message(payload.session_id, "assistant", answer, mode="offline")
+        return {
+            "session_id": payload.session_id,
+            "order_id": order_id,
+            "answer": answer,
+        }
+
+    progress = build_order_progress(order)
+    answer = _format_progress_answer(order_id, progress)
+    session_manager.add_progress_session_message(payload.session_id, "assistant", answer)
+    session_manager.add_progress_message(order_id, "user", payload.question)
+    session_manager.add_progress_message(order_id, "assistant", answer)
+    return {
+        "session_id": payload.session_id,
+        "order_id": order_id,
+        "progress": progress,
+        "answer": answer,
+    }
+
+
+@app.get("/progress/history/{session_id}")
+async def get_progress_session_history(session_id: str):
+    """查询会话级生产助手历史"""
+    history = session_manager.get_progress_session_history(session_id)
+    return {
+        "session_id": session_id,
+        "history": [message.model_dump() for message in history],
+    }
 
 
 @app.post("/reset/{session_id}")
@@ -240,11 +442,22 @@ async def production_queue_ws(websocket: WebSocket):
 
 @app.post("/tts", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest):
-    """AssemblyAI 文本转语音"""
-    if not config.ASSEMBLYAI_API_KEY:
-        raise HTTPException(status_code=400, detail="ASSEMBLYAI_API_KEY 未配置")
+    """文本转语音（AssemblyAI 或 gTTS）"""
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="缺少文本内容")
+
+    use_gtts = config.TTS_PROVIDER == "gtts" or not config.ASSEMBLYAI_API_KEY
+    if use_gtts:
+        try:
+            return await _synthesize_with_gtts(text, request.voice)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"gTTS 请求失败: {exc}")
+
     voice = request.voice or config.ASSEMBLYAI_TTS_VOICE or "alloy"
-    payload = {"text": request.text, "voice": voice, "format": "mp3"}
+    payload = {"text": text, "voice": voice, "format": "mp3"}
     headers = {
         "authorization": config.ASSEMBLYAI_API_KEY,
         "content-type": "application/json",
@@ -274,50 +487,142 @@ async def text_to_speech(request: TTSRequest):
 
 @app.websocket("/ws/stt")
 async def realtime_stt_ws(websocket: WebSocket):
-    """AssemblyAI 实时语音识别转发"""
+    """AssemblyAI 实时语音识别转发，并在最终文本时触发会话逻辑"""
     await websocket.accept()
     if not config.ASSEMBLYAI_API_KEY:
         await websocket.send_json({"error": "ASSEMBLYAI_API_KEY 未配置"})
         await websocket.close()
         return
 
-    assembly_uri = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+    params = {
+        "sample_rate": config.ASSEMBLYAI_STREAMING_SAMPLE_RATE,
+        "encoding": config.ASSEMBLYAI_STREAMING_ENCODING,
+        "speech_model": config.ASSEMBLYAI_STREAMING_MODEL,
+    }
+    assembly_uri = f"{config.ASSEMBLYAI_STREAMING_URL}?{urlencode(params)}"
     headers = {
         "Authorization": config.ASSEMBLYAI_API_KEY,
         "Accept": "application/json",
     }
+    session_id = websocket.query_params.get("session_id")
 
-    async def forward_client(to_ws):
+    async def send_client(payload: dict):
+        if websocket.client_state != WebSocketState.CONNECTED:
+            return
+        try:
+            await websocket.send_json(payload)
+        except WebSocketDisconnect:
+            pass
+        except RuntimeError:
+            pass
+
+    async def forward_client(to_ws: aiohttp.ClientWebSocketResponse):
         try:
             while True:
                 message = await websocket.receive_text()
                 payload = json.loads(message)
                 if payload.get("event") == "flush":
-                    await to_ws.send(json.dumps({"terminate_session": True}))
+                    await to_ws.close()
                     break
                 audio_data = payload.get("audio_data")
                 if audio_data:
-                    await to_ws.send(json.dumps({"audio_data": audio_data}))
+                    try:
+                        audio_bytes = base64.b64decode(audio_data)
+                    except (ValueError, binascii.Error):
+                        continue
+                    if audio_bytes:
+                        await to_ws.send_bytes(audio_bytes)
         except WebSocketDisconnect:
-            pass
+            await to_ws.close()
 
-    async def forward_assembly(from_ws):
+    async def dispatch_agent_response(text: str):
+        if not session_id or not text.strip():
+            return
+
+        async def safe_process():
+            try:
+                response = await _process_text(session_id, text)
+                await send_client({
+                    "message_type": "agent_response",
+                    "payload": jsonable_encoder(response),
+                })
+            except HTTPException as exc:
+                await send_client({
+                    "message_type": "agent_response_error",
+                    "detail": exc.detail,
+                })
+            except Exception as exc:
+                await send_client({
+                    "message_type": "agent_response_error",
+                    "detail": str(exc),
+                })
+
+        asyncio.create_task(safe_process())
+
+    processed_turns: set[int] = set()
+
+    async def forward_assembly(from_ws: aiohttp.ClientWebSocketResponse):
         try:
             async for msg in from_ws:
-                await websocket.send_text(msg)
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        await send_client({"message_type": "assembly_raw", "payload": msg.data})
+                        continue
+                    data_type = data.get("type")
+                    if data_type == "Begin":
+                        await send_client({
+                            "message_type": "assembly_session",
+                            "session_id": data.get("id"),
+                            "expires_at": data.get("expires_at"),
+                        })
+                        continue
+                    if data_type == "Termination":
+                        await send_client({
+                            "message_type": "assembly_termination",
+                            "reason": data.get("reason"),
+                        })
+                        continue
+                    if data_type != "Turn":
+                        await send_client({"message_type": "assembly_raw", "payload": data})
+                        continue
+
+                    transcript = data.get("transcript") or ""
+                    if transcript:
+                        await send_client({"message_type": "partial_transcript", "text": transcript})
+
+                    turn_order = data.get("turn_order")
+                    final_text = (data.get("utterance") or transcript or "").strip()
+                    if (
+                        data.get("end_of_turn")
+                        and final_text
+                        and turn_order is not None
+                        and turn_order not in processed_turns
+                    ):
+                        processed_turns.add(turn_order)
+                        await send_client({"message_type": "final_transcript", "text": final_text})
+                        await dispatch_agent_response(final_text)
+                elif msg.type == aiohttp.WSMsgType.BINARY:
+                    await websocket.send_bytes(msg.data)
+                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                    break
         except WebSocketDisconnect:
             pass
 
     try:
-        async with websockets.connect(assembly_uri, extra_headers=headers) as assembly_ws:
-            await asyncio.gather(
-                forward_client(assembly_ws),
-                forward_assembly(assembly_ws),
-            )
-    except WebSocketDisconnect:
-        return
+        async with aiohttp.ClientSession() as aiohttp_session:
+            async with aiohttp_session.ws_connect(assembly_uri, headers=headers, heartbeat=15) as assembly_ws:
+                await asyncio.gather(
+                    forward_client(assembly_ws),
+                    forward_assembly(assembly_ws),
+                )
+    except asyncio.CancelledError:
+        raise
+    except aiohttp.ClientError as exc:
+        await send_client({"error": f"连接 AssemblyAI 失败: {exc}"})
     except Exception as exc:
-        await websocket.send_json({"error": str(exc)})
+        await send_client({"error": str(exc)})
 
 
 # 如果需要服务前端静态文件
