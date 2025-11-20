@@ -190,3 +190,4 @@ tailwindcss + shadcn
 - **2025-11-17**：AssemblyAI Universal Streaming 必须通过 `aiohttp.ClientSession.ws_connect` 连接 `wss://streaming.assemblyai.com/v3/ws`，向服务端发送二进制 PCM16 音频并把 `Turn` 消息映射成现有的 `partial/final_transcript` 事件；所有错误走结构化 JSON 提示，客户端断线后不得继续写 socket。
 - **2025-11-17**：SessionManager 必须缓存最新成功下单的 `OrderState` 与 `order_metadata`，`SAVE_ORDER` 前先比对快照，完全一致的重复请求直接复用原订单号并提示“无需重复提交”，严禁再写库。
 - **2025-11-17**：TTS 模块默认用 AssemblyAI，若 `TTS_PROVIDER=gtts` 或未配置 API Key 则自动回退到 gTTS，本地产生 Base64 音频，禁止在无声 demo 场景下抛 500。
+- **2025-11-18**：LLM 调用顺序固定为 OpenRouter → Modal vLLM 70B（/v1 OpenAI 兼容，env: `VLLM_BASE_URL`/`VLLM_MODEL`/`VLLM_API_KEY`）→ 离线规则引擎；Modal vLLM 必须使用 A100-80GB + 缓存卷 `vllm-llama70b-cache`，可选 `VLLM_SERVER_API_KEY` 做鉴权。

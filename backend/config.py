@@ -30,12 +30,18 @@ class Config:
     TTS_PROVIDER = os.getenv("TTS_PROVIDER", "assemblyai").lower()
     GTTS_LANGUAGE = os.getenv("GTTS_LANGUAGE", "zh-CN")
     GTTS_SLOW = os.getenv("GTTS_SLOW", "false").lower() == "true"
+    GTTS_SPEED = float(os.getenv("GTTS_SPEED", "1.0"))
 
     # LLM Provider (OpenRouter 默认)
     OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
     OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
     OPENROUTER_SITE_NAME = os.getenv("OPENROUTER_SITE_NAME", "Tea Order Agent")
+
+    # 备用 LLM Provider (vLLM on Modal / 自托管)
+    VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "")
+    VLLM_MODEL = os.getenv("VLLM_MODEL", os.getenv("OPENROUTER_MODEL", "meta-llama/Llama-3.1-70B-Instruct"))
+    VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
     OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
 
     # Session

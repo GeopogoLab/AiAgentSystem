@@ -203,6 +203,34 @@ Modal 支持 WebSocket，但确保：
 - URL 使用正确的协议（wss:// 而非 ws://）
 - 前端正确配置了 WebSocket 端点
 
+## vLLM 70B 备选（OpenRouter 容灾）
+
+> 用途：OpenRouter 不可用或限流时自动回退，仍保持 OpenAI 兼容接口。
+
+### 1. 准备 Secret
+- 创建 `vllm-secrets`，至少包含：
+  - `HUGGING_FACE_HUB_TOKEN`（或 `HF_TOKEN`）用于拉取 Llama 70B
+  - （可选）`VLLM_SERVER_API_KEY` 若需要对外鉴权
+
+### 2. 部署 vLLM
+```bash
+./deploy_vllm.sh
+# 或
+modal deploy modal_vllm.py
+```
+默认请求双卡 A100-80G（`VLLM_GPU_COUNT=2`，`VLLM_TENSOR_PARALLEL=2`），如需单卡/低配请下调同时更新环境变量。
+部署完成会得到 URL，形如：
+```
+https://<你>--vllm-llama70b-serve-vllm.modal.run/v1
+```
+
+### 3. 后端启用回退
+- 在 `.env` 设置：
+  - `VLLM_BASE_URL=https://<上面的URL>`
+  - `VLLM_MODEL=meta-llama/Llama-3.1-70B-Instruct`（如需替换请同步更新 modal_vllm.py）
+  - `VLLM_API_KEY` 若 vLLM 端启用了 `--api-key`
+- Agent 请求顺序：OpenRouter → vLLM → 离线规则引擎。
+
 ## CORS 配置
 
 如果遇到跨域问题，后端已配置允许所有来源：
