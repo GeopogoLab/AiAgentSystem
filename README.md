@@ -137,6 +137,7 @@ PORT=8000
 - AssemblyAI: https://www.assemblyai.com/
 - OpenRouter: https://openrouter.ai/keys （申请 key 并确保账户余额足够，开启 Llama 3.3 70B 可用的 provider）
 - vLLM 备选：部署 `modal_vllm.py` 到 Modal，拿到 URL 后设置 `VLLM_BASE_URL=https://.../v1`；如开启 `--api-key` 认证则同步配置 `VLLM_API_KEY`
+- LLM 路由：`backend/llm/backends.py` 已抽离 OpenRouter/vLLM 逻辑，Modal 部署后只需填好 `VLLM_BASE_URL` / `VLLM_API_KEY` 即可自动降级
 - OpenAI: https://platform.openai.com/ （兼容用途，可留空）
 
 ### 4. 启动服务
