@@ -14,10 +14,10 @@ if ! command -v modal &> /dev/null; then
     pip install modal
 fi
 
-# 登录检查
+# 登录检查（modal 1.1+ 已无 token current 命令，用 profile list 验证）
 echo "📋 检查 Modal 认证..."
-if ! modal token current &> /dev/null; then
-    echo "⚠️  未登录 Modal，请先运行: modal token new"
+if ! modal profile list &> /dev/null; then
+    echo "⚠️  Modal 未登录或网络异常，请先运行: modal token new"
     exit 1
 fi
 
