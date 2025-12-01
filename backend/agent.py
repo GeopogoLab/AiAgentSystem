@@ -1,10 +1,9 @@
 """LLM Agent 点单逻辑"""
 import json
 import logging
-from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
-from openai import AsyncOpenAI
 from .config import config
+from .llm import LLMBackend, LLMBackendRouter
 from .models import (
     OrderState,
     AgentResponse,
@@ -21,21 +20,13 @@ from .production import build_order_progress, build_queue_snapshot
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class LLMProvider:
-    """同步描述一个可用的 LLM 端点"""
-    name: str
-    client: AsyncOpenAI
-    model: str
-
-
 class TeaOrderAgent:
     """奶茶点单 Agent（支持 Function Calling）"""
 
     def __init__(self):
         """初始化 Agent"""
-        self.providers = self._build_providers()
-        if not self.providers:
+        self.llm_router = LLMBackendRouter(config)
+        if not self.llm_router.backends:
             logger.warning("未发现可用的在线 LLM 提供者，将使用离线规则引擎。")
         self.tools = self._build_tools()
 
@@ -72,36 +63,6 @@ class TeaOrderAgent:
                 }
             }
         ]
-
-    def _build_providers(self) -> List[LLMProvider]:
-        """构建可用的 LLM 端点（主 OpenRouter + 备选 vLLM）"""
-        providers: List[LLMProvider] = []
-
-        openrouter_key = (config.OPENROUTER_API_KEY or "").strip()
-        if openrouter_key:
-            providers.append(LLMProvider(
-                name="openrouter",
-                client=AsyncOpenAI(
-                    api_key=openrouter_key,
-                    base_url=config.OPENROUTER_BASE_URL,
-                    default_headers=self._build_default_headers()
-                ),
-                model=config.OPENROUTER_MODEL
-            ))
-
-        vllm_base = (config.VLLM_BASE_URL or "").strip()
-        if vllm_base:
-            vllm_key = (config.VLLM_API_KEY or "EMPTY").strip() or "EMPTY"
-            providers.append(LLMProvider(
-                name="vllm",
-                client=AsyncOpenAI(
-                    api_key=vllm_key,
-                    base_url=vllm_base.rstrip("/")
-                ),
-                model=config.VLLM_MODEL or config.OPENROUTER_MODEL
-            ))
-
-        return providers
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
@@ -283,7 +244,7 @@ class TeaOrderAgent:
             "content": user_text
         })
 
-        if not self.providers:
+        if not self.llm_router.backends:
             return self._offline_response(
                 user_text=user_text,
                 current_order_state=current_order_state,
@@ -292,7 +253,7 @@ class TeaOrderAgent:
 
         # 调用 LLM（支持 Function Calling）
         try:
-            response, provider = await self._call_llm_with_fallback(
+            response, provider = await self.llm_router.call_with_fallback(
                 messages=messages,
                 temperature=config.OPENAI_TEMPERATURE,
                 tools=self.tools,
@@ -307,7 +268,7 @@ class TeaOrderAgent:
                     messages=messages,
                     tool_calls=message.tool_calls,
                     current_order_state=current_order_state,
-                    primary_provider=provider
+                    primary_backend=provider
                 )
 
             # 无工具调用，解析正常回复（JSON 格式）
@@ -377,7 +338,7 @@ class TeaOrderAgent:
         messages: List[Dict[str, Any]],
         tool_calls: Any,
         current_order_state: OrderState,
-        primary_provider: Optional[LLMProvider] = None
+        primary_backend: Optional[LLMBackend] = None
     ) -> AgentResponse:
         """执行工具调用并获取最终回复"""
         # 添加 assistant 的工具调用消息
@@ -438,11 +399,11 @@ class TeaOrderAgent:
 }"""
         })
 
-        final_response, provider = await self._call_llm_with_fallback(
+        final_response, provider = await self.llm_router.call_with_fallback(
             messages=messages,
             temperature=config.OPENAI_TEMPERATURE,
             response_format={"type": "json_object"},
-            primary_provider=primary_provider
+            primary=primary_backend
         )
 
         final_content = final_response.choices[0].message.content
@@ -478,38 +439,6 @@ class TeaOrderAgent:
             mode="online"
         )
 
-    def _ordered_providers(self, primary: Optional[LLMProvider] = None) -> List[LLMProvider]:
-        """返回带优先级的 provider 列表"""
-        if not primary:
-            return list(self.providers)
-        ordered = [primary]
-        ordered.extend([provider for provider in self.providers if provider.name != primary.name])
-        return ordered
-
-    async def _call_llm_with_fallback(
-        self,
-        *,
-        messages: List[Dict[str, Any]],
-        primary_provider: Optional[LLMProvider] = None,
-        **kwargs: Any
-    ):
-        """顺序尝试所有在线 LLM，保证 OpenRouter 不可用时自动降级 vLLM"""
-        errors: List[str] = []
-        for provider in self._ordered_providers(primary_provider):
-            try:
-                response = await provider.client.chat.completions.create(
-                    model=provider.model,
-                    messages=messages,
-                    **kwargs
-                )
-                return response, provider
-            except Exception as exc:  # pragma: no cover - 网络/服务异常
-                err_msg = f"{provider.name}: {type(exc).__name__}: {exc}"
-                logger.error("LLM 调用失败，尝试下一个备选：%s", err_msg)
-                errors.append(err_msg)
-                continue
-        raise RuntimeError("; ".join(errors) if errors else "没有可用的 LLM 提供者")
-
     async def _execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """执行具体工具"""
         from fastapi.encoders import jsonable_encoder
@@ -529,15 +458,6 @@ class TeaOrderAgent:
 
         else:
             return {"error": f"未知工具: {function_name}"}
-
-    def _build_default_headers(self) -> Dict[str, str]:
-        """构建 OpenRouter 默认请求头"""
-        headers: Dict[str, str] = {}
-        if config.OPENROUTER_SITE_URL:
-            headers["HTTP-Referer"] = config.OPENROUTER_SITE_URL
-        if config.OPENROUTER_SITE_NAME:
-            headers["X-Title"] = config.OPENROUTER_SITE_NAME
-        return headers
 
     def _offline_response(
         self,
