@@ -1,4 +1,4 @@
-import { Flame, ListCheck } from 'lucide-react';
+import { Flame, ListChecks } from 'lucide-react';
 import { ProductionQueueSnapshot } from '../types';
 import { formatRelativeTime } from '../utils/time';
 
@@ -98,7 +98,7 @@ export function QueueBoard({ snapshot, highlightedIds = [] }: QueueBoardProps) {
       <div className="mt-6 space-y-6">
         <section>
           <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-[0.4em] text-ink-400">
-            <ListCheck className="h-4 w-4" />
+            <ListChecks className="h-4 w-4" />
             制作中
           </div>
           <div className="space-y-3">{renderActive()}</div>

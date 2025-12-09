@@ -253,6 +253,8 @@ class TeaOrderAgent:
 
         # 调用 LLM（支持 Function Calling）
         try:
+            logger.info(f"准备调用 LLM，消息数: {len(messages)}")
+
             response, provider = await self.llm_router.call_with_fallback(
                 messages=messages,
                 temperature=config.OPENAI_TEMPERATURE,
@@ -260,6 +262,7 @@ class TeaOrderAgent:
                 tool_choice="auto"
             )
 
+            logger.info(f"✅ LLM 调用成功，使用后端: {provider.name}")
             message = response.choices[0].message
 
             # 处理 Tool Calls
@@ -325,7 +328,7 @@ class TeaOrderAgent:
             return agent_response
 
         except Exception as e:
-            logger.error(f"LLM 调用异常: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"❌ 所有 LLM 后端调用失败: {type(e).__name__}: {e}", exc_info=True)
             logger.warning("LLM 调用失败，切换离线模式：%s", e)
             return self._offline_response(
                 user_text=user_text,
@@ -399,6 +402,8 @@ class TeaOrderAgent:
 }"""
         })
 
+        logger.info(f"调用 LLM 生成工具调用后的最终回复，消息数: {len(messages)}")
+
         final_response, provider = await self.llm_router.call_with_fallback(
             messages=messages,
             temperature=config.OPENAI_TEMPERATURE,
@@ -406,6 +411,7 @@ class TeaOrderAgent:
             primary=primary_backend
         )
 
+        logger.info(f"✅ 工具调用后 LLM 响应成功，使用后端: {provider.name}")
         final_content = final_response.choices[0].message.content
         if not final_content:
             raise ValueError("工具调用后 LLM 返回空内容")

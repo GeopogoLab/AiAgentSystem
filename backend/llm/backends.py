@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ class LLMBackend:
     name: str
     client: AsyncOpenAI
     model: str
+    timeout: float = 30.0  # 默认超时 30 秒
 
 
 class LLMBackendRouter:
@@ -40,6 +41,7 @@ class LLMBackendRouter:
                         default_headers=self._build_default_headers(),
                     ),
                     model=getattr(self.config, "OPENROUTER_MODEL", ""),
+                    timeout=getattr(self.config, "OPENROUTER_TIMEOUT", 5.0),  # OpenRouter 5秒超时
                 )
             )
 
@@ -54,6 +56,7 @@ class LLMBackendRouter:
                     name="vllm",
                     client=AsyncOpenAI(api_key=vllm_key, base_url=vllm_base.rstrip("/")),
                     model=vllm_model,
+                    timeout=getattr(self.config, "VLLM_TIMEOUT", 10.0),  # vLLM 10秒超时
                 )
             )
 
@@ -78,6 +81,27 @@ class LLMBackendRouter:
         ordered.extend([backend for backend in self.backends if backend.name != primary.name])
         return ordered
 
+    def _is_retriable_error(self, exc: Exception) -> bool:
+        """判断错误是否可重试（应该降级到下一个后端）"""
+        # 超时错误 - 主要目标
+        if isinstance(exc, APITimeoutError):
+            return True
+
+        # 网络连接错误
+        if isinstance(exc, APIConnectionError):
+            return True
+
+        # 429 限流错误
+        if isinstance(exc, RateLimitError):
+            return True
+
+        # 5xx 服务器错误
+        if isinstance(exc, APIStatusError) and exc.status_code >= 500:
+            return True
+
+        # 其他错误（如 400 参数错误）不降级
+        return False
+
     async def call_with_fallback(
         self,
         *,
@@ -85,17 +109,36 @@ class LLMBackendRouter:
         primary: Optional[LLMBackend] = None,
         **kwargs: Any,
     ) -> Tuple[Any, LLMBackend]:
-        """顺序尝试所有在线 LLM，保证 OpenRouter 不可用时自动降级 vLLM"""
+        """顺序尝试所有在线 LLM，支持超时降级"""
         errors: List[str] = []
+
         for backend in self._ordered_backends(primary):
             try:
+                logger.info(f"调用 {backend.name}，超时设置: {backend.timeout}秒")
+
+                # 关键：传入 timeout 参数启用超时检测
                 response = await backend.client.chat.completions.create(
-                    model=backend.model, messages=messages, **kwargs
+                    model=backend.model,
+                    messages=messages,
+                    timeout=backend.timeout,  # 启用超时
+                    **kwargs
                 )
+
+                logger.info(f"✅ {backend.name} 调用成功")
                 return response, backend
+
             except Exception as exc:  # pragma: no cover - 网络/服务异常
-                err_msg = f"{backend.name}: {type(exc).__name__}: {exc}"
-                logger.error("LLM 调用失败，尝试下一个备选：%s", err_msg)
-                errors.append(err_msg)
-                continue
-        raise RuntimeError("; ".join(errors) if errors else "没有可用的 LLM 提供者")
+                # 使用错误分类判断是否应该降级
+                if self._is_retriable_error(exc):
+                    logger.warning(
+                        f"⚠️ {backend.name} 可重试错误: {type(exc).__name__}: {exc}"
+                    )
+                    errors.append(f"{backend.name}: {type(exc).__name__}")
+                    continue  # 尝试下一个后端
+                else:
+                    # 不可重试错误（如 400 参数错误），直接抛出
+                    logger.error(f"❌ {backend.name} 不可重试错误: {exc}")
+                    raise
+
+        # 所有后端失败
+        raise RuntimeError(f"所有 LLM 后端失败: {'; '.join(errors)}")
