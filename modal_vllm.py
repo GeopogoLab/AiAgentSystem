@@ -6,21 +6,21 @@ import modal
 # 模型与运行参数
 DEFAULT_MODEL = "meta-llama/Llama-3.1-70B-Instruct"
 MODEL_ID = os.environ.get("VLLM_MODEL", DEFAULT_MODEL)
-TENSOR_PARALLEL = os.environ.get("VLLM_TENSOR_PARALLEL", "2")
-MAX_MODEL_LEN = os.environ.get("VLLM_MAX_MODEL_LEN", "4096")
-GPU_MEMORY_UTILIZATION = os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.9")
+TENSOR_PARALLEL = os.environ.get("VLLM_TENSOR_PARALLEL", "1")
+MAX_MODEL_LEN = os.environ.get("VLLM_MAX_MODEL_LEN", "8192")
+GPU_MEMORY_UTILIZATION = os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.95")
 SERVER_PORT = int(os.environ.get("VLLM_SERVER_PORT", "8000"))
 SERVER_API_KEY = os.environ.get("VLLM_SERVER_API_KEY", os.environ.get("VLLM_API_KEY", ""))
-GPU_COUNT = int(os.environ.get("VLLM_GPU_COUNT", "2"))
+GPU_COUNT = int(os.environ.get("VLLM_GPU_COUNT", "1"))
 
 # 镜像：安装 vLLM 与依赖
 vllm_image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("git")
     .pip_install(
-        "vllm==0.6.2.post1",
-        "torch==2.4.1",
-        "transformers==4.44.2",
+        "vllm==0.6.6.post1",
+        "torch==2.5.1",
+        "transformers==4.46.0",
         "hf-transfer"
     )
 )
@@ -34,13 +34,13 @@ app = modal.App("vllm-llama70b")
 
 @app.function(
     image=vllm_image,
-    gpu=modal.gpu.A100(memory=80, count=GPU_COUNT),
+    gpu="A100-80GB",
     timeout=24 * 3600,
-    container_idle_timeout=15 * 60,
-    allow_concurrent_inputs=100,
+    scaledown_window=15 * 60,
     volumes={"/weights": weights_volume},
     secrets=[modal.Secret.from_name("vllm-secrets")],
 )
+@modal.concurrent(max_inputs=100)
 @modal.web_server(port=SERVER_PORT)
 def serve_vllm():
     """启动 vLLM OpenAI 兼容服务"""
@@ -82,5 +82,7 @@ def main():
     print("部署命令: modal deploy modal_vllm.py")
     print("默认模型:", MODEL_ID)
     print(f"GPU: A100-80G x {GPU_COUNT} (tensor_parallel={TENSOR_PARALLEL})")
+    print(f"最大上下文长度: {MAX_MODEL_LEN} tokens")
+    print(f"显存利用率: {GPU_MEMORY_UTILIZATION}")
     print("Secret 名称: vllm-secrets (可含 HUGGING_FACE_HUB_TOKEN / VLLM_SERVER_API_KEY)")
     print(f"模型缓存卷: vllm-llama70b-cache -> /weights")

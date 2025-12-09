@@ -21,7 +21,7 @@ export function ChatContainer({ messages }: ChatContainerProps) {
       ref={containerRef}
       role="log"
       aria-live="polite"
-      className="h-[420px] space-y-4 overflow-y-auto pr-2 scroll-smooth"
+      className="h-[420px] space-y-4 overflow-y-auto pr-2"
     >
       {messages.map((message, index) => (
         <Message key={index} message={message} />

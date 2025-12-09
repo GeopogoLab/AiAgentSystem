@@ -34,7 +34,7 @@ export default function App() {
 
     const connect = () => {
       const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const wsBase = apiBase.replace(/^http/i, (match) => (match.toLowerCase() === 'https' ? 'wss' : 'ws'));
+      const wsBase = apiBase.replace(/^http/i, (match: string) => (match.toLowerCase() === 'https' ? 'wss' : 'ws'));
       ws = new WebSocket(`${wsBase.replace(/\/$/, '')}/ws/production/queue`);
 
       ws.onopen = () => {
