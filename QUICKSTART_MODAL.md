@@ -42,6 +42,17 @@ OPENROUTER_API_KEY=你的OpenRouter密钥
 modal deploy modal_app.py
 ```
 
+### 额外：部署 vLLM 70B 备选（OpenRouter 降级用）
+
+```bash
+cd vllm-workspace
+./scripts/deploy_vllm.sh
+# 或
+modal deploy modal/modal_vllm.py
+```
+
+部署完成后，将返回的 URL（形如 `https://<你>--vllm-llama70b-serve-vllm.modal.run/v1`）填入 `.env` 的 `VLLM_BASE_URL`。默认请求 2×A100-80G，如需下调请同步调节 `VLLM_GPU_COUNT` / `VLLM_TENSOR_PARALLEL`。
+
 ## 第五步：获取 URL
 
 部署成功后，你会看到类似这样的输出：
@@ -106,6 +117,6 @@ modal deploy modal_app.py
 
 ## 需要帮助？
 
-查看详细部署指南：[MODAL_DEPLOYMENT.md](./MODAL_DEPLOYMENT.md)
+查看详细部署指南：[vllm-workspace/docs/MODAL_DEPLOYMENT.md](vllm-workspace/docs/MODAL_DEPLOYMENT.md)
 
 Modal 官方文档：https://modal.com/docs

@@ -3517,3 +3517,4 @@ uploads/
 /backstage-frontend/node_modules/yallist/README.md
 /backstage-frontend/node_modules/yallist/yallist.js
 /backstage-frontend/node_modules/.package-lock.json
+/backstage-frontend/node_modules/

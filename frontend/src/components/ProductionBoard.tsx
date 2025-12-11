@@ -35,7 +35,7 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
       return (
         <article
           key={order.order_id}
-          className={`group relative overflow-hidden rounded-3xl border border-white/15 bg-white/5 p-4 text-sm transition-all duration-500 hover:-translate-y-2 hover:border-white/40 hover:bg-white/10 hover:shadow-2xl hover:scale-[1.02] ${
+          className={`group relative overflow-visible rounded-3xl border border-white/15 bg-white/5 p-4 text-sm transition-all duration-500 hover:-translate-y-2 hover:border-white/40 hover:bg-white/10 hover:shadow-2xl hover:scale-[1.02] ${
             isCurrent ? 'border-white/50 bg-white/15 shadow-glow' : ''
           }`}
         >
@@ -53,16 +53,24 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
             <div className={metaPill}>{order.current_stage.toUpperCase()}</div>
           </div>
 
-          {/* 悬浮时显示的详细信息 */}
-          <div className="mt-3 opacity-0 max-h-0 overflow-hidden transition-all duration-500 group-hover:opacity-100 group-hover:max-h-40">
-            <div className="rounded-2xl border border-white/20 bg-black/60 p-3 backdrop-blur-sm animate-slide-up">
-              <div className="text-[10px] uppercase tracking-[0.4em] text-ink-400 mb-2">订单详情</div>
+          {/* 悬浮提示框 - 绝对定位在卡片上方 */}
+          <div className="pointer-events-none absolute left-1/2 bottom-full mb-2 -translate-x-1/2 opacity-0 transition-all duration-300 group-hover:opacity-100 group-hover:-translate-y-2 z-50">
+            <div className="relative rounded-2xl border border-white/30 bg-black/95 p-4 shadow-2xl backdrop-blur-md min-w-[280px]">
+              <div className="text-[10px] uppercase tracking-[0.4em] text-ink-400 mb-3">订单详情</div>
 
               {/* 下单时间 */}
               <div className="mb-2 flex items-center justify-between text-xs">
                 <span className="text-ink-400">下单时间</span>
                 <span className="text-white font-mono">{placedAtFormatted}</span>
               </div>
+
+              {/* 饮品名称 */}
+              {order.drink_name && (
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="text-ink-400">饮品</span>
+                  <span className="text-white">{order.drink_name}</span>
+                </div>
+              )}
 
               {/* 订单配置 */}
               <div className="flex flex-wrap gap-2 text-[10px] mb-2">
@@ -73,10 +81,16 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
 
               {/* 加料 */}
               {order.toppings?.length ? (
-                <div className="text-[11px] text-ink-300">
+                <div className="text-[11px] text-ink-300 border-t border-white/10 pt-2 mt-2">
                   <span className="text-ink-400">加料：</span>{order.toppings.join('、')}
                 </div>
               ) : null}
+
+              {/* 小三角指示器 */}
+              <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px">
+                <div className="border-8 border-transparent border-t-white/30"></div>
+                <div className="absolute left-1/2 -translate-x-1/2 -top-[15px] border-[7px] border-transparent border-t-black/95"></div>
+              </div>
             </div>
           </div>
 
@@ -111,7 +125,7 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
       return (
         <article
           key={order.order_id}
-          className="group relative overflow-hidden rounded-3xl border border-white/10 bg-black/30 p-4 text-sm text-ink-200 transition-all duration-300 hover:border-white/30 hover:bg-black/40 hover:-translate-y-1 hover:scale-[1.01]"
+          className="group relative overflow-visible rounded-3xl border border-white/10 bg-black/30 p-4 text-sm text-ink-200 transition-all duration-300 hover:border-white/30 hover:bg-black/40 hover:-translate-y-1 hover:scale-[1.01]"
         >
           <div className="flex items-center justify-between">
             <div>
@@ -124,30 +138,44 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
             </div>
           </div>
 
-          {/* 悬浮时显示的详细信息 */}
-          <div className="mt-2 opacity-0 max-h-0 overflow-hidden transition-all duration-300 group-hover:opacity-100 group-hover:max-h-32">
-            <div className="rounded-xl border border-white/15 bg-black/50 p-2 mt-2 backdrop-blur-sm">
-              <div className="text-[10px] uppercase tracking-[0.4em] text-ink-500 mb-1.5">订单详情</div>
+          {/* 悬浮提示框 - 绝对定位在卡片上方 */}
+          <div className="pointer-events-none absolute left-1/2 bottom-full mb-2 -translate-x-1/2 opacity-0 transition-all duration-300 group-hover:opacity-100 group-hover:-translate-y-2 z-50">
+            <div className="relative rounded-2xl border border-emerald-300/30 bg-black/95 p-4 shadow-2xl backdrop-blur-md min-w-[280px]">
+              <div className="text-[10px] uppercase tracking-[0.4em] text-ink-400 mb-3">订单详情</div>
 
               {/* 下单时间 */}
-              <div className="mb-1.5 flex items-center justify-between text-[11px]">
+              <div className="mb-2 flex items-center justify-between text-xs">
                 <span className="text-ink-400">下单时间</span>
-                <span className="text-ink-200 font-mono">{placedAtFormatted}</span>
+                <span className="text-white font-mono">{placedAtFormatted}</span>
               </div>
 
+              {/* 饮品名称 */}
+              {order.drink_name && (
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="text-ink-400">饮品</span>
+                  <span className="text-white">{order.drink_name}</span>
+                </div>
+              )}
+
               {/* 订单配置 */}
-              <div className="flex flex-wrap gap-1.5 text-[10px]">
-                {order.size && <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-ink-300">{order.size}</span>}
-                {order.sugar && <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-ink-300">{order.sugar}</span>}
-                {order.ice && <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-ink-300">{order.ice}</span>}
+              <div className="flex flex-wrap gap-2 text-[10px] mb-2">
+                {order.size && <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-ink-200">{order.size}</span>}
+                {order.sugar && <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-ink-200">{order.sugar}</span>}
+                {order.ice && <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-ink-200">{order.ice}</span>}
               </div>
 
               {/* 加料 */}
               {order.toppings?.length ? (
-                <div className="text-[10px] text-ink-400 mt-1.5">
-                  加料：{order.toppings.join('、')}
+                <div className="text-[11px] text-ink-300 border-t border-white/10 pt-2 mt-2">
+                  <span className="text-ink-400">加料：</span>{order.toppings.join('、')}
                 </div>
               ) : null}
+
+              {/* 小三角指示器 */}
+              <div className="absolute left-1/2 top-full -translate-x-1/2 -mt-px">
+                <div className="border-8 border-transparent border-t-emerald-300/30"></div>
+                <div className="absolute left-1/2 -translate-x-1/2 -top-[15px] border-[7px] border-transparent border-t-black/95"></div>
+              </div>
             </div>
           </div>
 
@@ -176,12 +204,12 @@ export function ProductionBoard({ snapshot, activeOrderId }: ProductionBoardProp
       <div className="relative mt-6 space-y-6">
         <section>
           <div className="mb-3 text-xs uppercase tracking-[0.4em] text-ink-400">制作中</div>
-          <div className="space-y-3">{renderActiveOrders()}</div>
+          <div className="space-y-3 overflow-visible">{renderActiveOrders()}</div>
         </section>
 
         <section>
           <div className="mb-3 text-xs uppercase tracking-[0.4em] text-ink-400">最近完成</div>
-          <div className="space-y-3">{renderCompletedOrders()}</div>
+          <div className="space-y-3 overflow-visible">{renderCompletedOrders()}</div>
         </section>
       </div>
     </div>

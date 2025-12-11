@@ -170,23 +170,6 @@
 tailwindcss + shadcn
 
 ## 架构规则
-- **2025-11-15**：后端 API 必须提供 `/health`，同步返回数据库与上传目录状态，任何新增服务都要遵循这个约定以便统一监控。
-- **2025-11-15**：所有 Pydantic 模型禁止共享可变默认值，一律通过 `Field(default_factory=...)` 初始化，防止跨会话污染。
-- **2025-11-15**：LLM 代理必须具备离线回退逻辑（当 API Key 缺失或调用失败时自动切换规则引擎），保证环境受限时依旧可完成下单流程。
-- **2025-11-15**：前端统一根据 `order_status` 显示进度提示，并复用响应处理逻辑，保持文本与语音交互的一致体验。
-- **2025-11-15**：TailwindCSS + shadcn 的界面改动需要通过 Chrome MCP 进行端对端渲染检查，确保没有白屏或渲染异常。
-- **2025-11-15**：FastAPI 生命周期必须使用 lifespan handler，禁止 `@app.on_event` 这类弃用钩子，启动日志等初始化逻辑全部放在 lifespan 内。
-- **2025-11-15**：线上 LLM 统一接入 OpenRouter（默认 Llama 3.3 70B Instruct），配置项写进 `.env`，前端需在 UI 中显式标注当前模型来源。
-- **2025-11-15**：订单确认后必须生成制作进度 API（`/orders/{id}/status`），前端的“制作进度助手”只能基于该结构化数据播报 ETA，不允许靠硬编码或 LLM 猜测。
-- **2025-11-15**：点单与制作进度两个助手必须彻底隔离会话历史：点单沿用 `SessionState.history`，进度助手统一通过 `/progress/chat` 与 `/progress/history/{session_id}` 维护会话上下文，同时镜像到每个订单的 progress-history 以便审计，前端始终标注 LLM/离线模式。
-- **2025-11-15**：语音输入默认走 AssemblyAI 实时 WebSocket（/ws/stt），文本转写完成后自动进入 LLM；排队面板通过 /production/queue + WebSocket 推送，任何播报逻辑都必须基于该数据。
-- **2025-11-15**：进度助手的 LLM Prompt 必须携带完整 `ProductionQueueSnapshot`，在用户未提供订单号时先回答全局排队概况并主动索要编号，通过 `/progress/chat` 接口自由切换订单。
-- **2025-11-15**：所有 WebSocket 与 JSON 流响应（包括 `/ws/orders/{id}/status`、`/ws/production/queue`）必须使用 `jsonable_encoder` 序列化，杜绝 datetime 直接抛给 `json.dumps` 导致的崩溃。
-- **2025-11-15**：点单流程在 `SAVE_ORDER` 后必须调用统一的定价模块返回 `order_total`，前端同步展示金额；任何新增接入点都要沿用 `calculate_order_total`，禁止各处手写价格逻辑。
-- **2025-11-16**：前端 UI 统一采用黑白灰配色与玻璃拟态质感，首屏必须展示 Session / Model / Mode 芯片及排队统计，互动组件需带轻量动画反馈（按钮波纹、状态呼吸灯等），并在每次 Tailwind + shadcn 调整后保持文本/语音入口与生产看板的版式一致。
-- **2025-11-16**：订单保存后必须返回结构化 `order_metadata`（含 session_id 与 placed_at），所有生产队列与进度查询 API 统一输出该时间戳，并同步写入 SessionManager 的 progress/会话历史，确保前端 AI 工具可以播报真实下单时间。
-- **2025-11-16**：语音模式统一通过 `/ws/stt?session_id=` WebSocket 回路传输（含 AssemblyAI partial/final transcript、TalkResponse），前端不得再用 HTTP 提交语音结果，需实时展示识别文本与 Agent 回复；后端 final transcript 必须触发 `_process_text` 并将结果 `agent_response` 下行。
-- **2025-11-16**：后台 `backstage-frontend` 必须保持黑白玻璃风格，通过 `/ws/production/queue` 实时监听并以轮询兜底，新订单需自动弹窗列出制作清单，手动确认后才可关闭。
-- **2025-11-17**：AssemblyAI Universal Streaming 必须通过 `aiohttp.ClientSession.ws_connect` 连接 `wss://streaming.assemblyai.com/v3/ws`，向服务端发送二进制 PCM16 音频并把 `Turn` 消息映射成现有的 `partial/final_transcript` 事件；所有错误走结构化 JSON 提示，客户端断线后不得继续写 socket。
-- **2025-11-17**：SessionManager 必须缓存最新成功下单的 `OrderState` 与 `order_metadata`，`SAVE_ORDER` 前先比对快照，完全一致的重复请求直接复用原订单号并提示“无需重复提交”，严禁再写库。
-- **2025-11-17**：TTS 模块默认用 AssemblyAI，若 `TTS_PROVIDER=gtts` 或未配置 API Key 则自动回退到 gTTS，本地产生 Base64 音频，禁止在无声 demo 场景下抛 500。
+- **2025-12-08**：LLM 路由必须通过配置超时时间主动监测 OpenRouter 响应，超时、连接异常、429 限流或 5xx 错误要立刻触发 vLLM 备份，记录降级日志并尽量保持每个后端的成功/失败统计；不可重试错误应立即停止并反馈调用方。
+- **2025-12-08**：生产看板所依赖的 `ProductionQueueSnapshot` 里各 `OrderProgress` 要包含饮品、杯型、甜度、冰块、加料等字段，以便 UI 能用统一数据渲染浮层，不再需要额外接口或特殊 case。
+- **2025-12-08**：前端或后台任何 Tailwind + shadcn 界面改动必须先跑对应的 Vite build，发现编译/类型错误要立即修复，避免新增渲染路径在生产中因缺失导出或类型漏写导致白屏。

@@ -61,6 +61,11 @@ export interface OrderProgress {
   timeline: ProductionTimelineItem[];
   queue_position?: number | null;
   total_orders?: number | null;
+  drink_name?: string | null;
+  size?: string | null;
+  sugar?: string | null;
+  ice?: string | null;
+  toppings?: string[];
 }
 
 export interface ProductionQueueSnapshot {

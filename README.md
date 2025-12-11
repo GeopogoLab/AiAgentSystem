@@ -6,6 +6,7 @@
 
 - 🎤 **语音输入**：集成 AssemblyAI 实时 WebSocket 语音识别
 - 💬 **智能对话**：使用 OpenRouter · Llama 3.3 70B 实现自然语言交互
+- 🔁 **双路容灾**：OpenRouter 主路由，Modal vLLM 70B 自托管备选，自动降级不断线
 - 🛠️ **Function Calling**：Agent 自主调用工具查询订单进度和排队状态
 - 📝 **文本输入**：支持文字输入模式（方便测试和使用）
 - 🗄️ **订单管理**：SQLite 数据库存储订单
@@ -40,6 +41,8 @@
 │  └──────────────────────┘  │
 └─────────────────────────────┘
 ```
+
+LLM 请求顺序：OpenRouter → Modal vLLM 70B 备选 → 规则引擎离线模式，保证弱网或限流场景仍可用。
 
 ## 📋 流程说明
 
@@ -112,6 +115,13 @@ OPENROUTER_SITE_URL=https://your-site-url.example.com
 OPENROUTER_SITE_NAME=Tea Order Agent
 ASSEMBLYAI_TTS_VOICE=alloy
 
+# vLLM 备选（可选）
+VLLM_BASE_URL=https://<modal-user>--vllm-llama70b-serve-vllm.modal.run/v1
+VLLM_MODEL=meta-llama/Llama-3.1-70B-Instruct
+VLLM_API_KEY=EMPTY  # 如在 vLLM 端设置 --api-key，则填入对应值
+VLLM_GPU_COUNT=2
+VLLM_TENSOR_PARALLEL=2
+
 # 兼容 OpenAI（如需）
 OPENAI_API_KEY=
 
@@ -126,7 +136,11 @@ PORT=8000
 **获取 / 配置说明：**
 - AssemblyAI: https://www.assemblyai.com/
 - OpenRouter: https://openrouter.ai/keys （申请 key 并确保账户余额足够，开启 Llama 3.3 70B 可用的 provider）
+- vLLM 备选：进入 `vllm-workspace` 目录，部署 `modal/modal_vllm.py` 或运行 `./scripts/deploy_vllm.sh` 以获取备选模型 URL，再设置 `VLLM_BASE_URL=https://.../v1`；如开启 `--api-key` 认证则同步配置 `VLLM_API_KEY`
+- LLM 路由：`backend/llm/backends.py` 已抽离 OpenRouter/vLLM 逻辑，Modal 部署后只需填好 `VLLM_BASE_URL` / `VLLM_API_KEY` 即可自动降级
 - OpenAI: https://platform.openai.com/ （兼容用途，可留空）
+
+> **vLLM workspace**：所有 vLLM 备选模型、脚本与文档都集中在 `vllm-workspace/`。进入该目录后可使用 `modal/modal_vllm.py`、`scripts/deploy_vllm.sh`、`tools/vllm_wrapper.py`、`tests/` 等文件来操作备份模型和验证路由逻辑。
 
 ### 4. 启动服务
 

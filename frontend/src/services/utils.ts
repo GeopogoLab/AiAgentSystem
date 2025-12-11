@@ -34,17 +34,17 @@ export function formatOrderInfo(orderState: any): string {
 }
 
 /**
- * 格式化相对时间文本
+ * 计算并返回相对时间描述（如“3 分钟前”）
  */
 export function formatRelativeTime(value?: string | null): string {
   if (!value) return '未知时间';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
 
-  const diff = Date.now() - date.getTime();
-  if (diff < 60_000) return '刚刚';
+  const diffMs = Date.now() - parsed.getTime();
+  if (diffMs < 60_000) return '刚刚';
 
-  const minutes = Math.floor(diff / 60_000);
+  const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 60) return `${minutes} 分钟前`;
 
   const hours = Math.floor(minutes / 60);

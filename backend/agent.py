@@ -2,8 +2,8 @@
 import json
 import logging
 from typing import List, Dict, Optional, Any
-from openai import AsyncOpenAI
 from .config import config
+from .llm import LLMBackend, LLMBackendRouter
 from .models import (
     OrderState,
     AgentResponse,
@@ -25,17 +25,9 @@ class TeaOrderAgent:
 
     def __init__(self):
         """初始化 Agent"""
-        api_key = (config.OPENROUTER_API_KEY or "").strip()
-        if api_key:
-            self.client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=config.OPENROUTER_BASE_URL,
-                default_headers=self._build_default_headers()
-            )
-        else:
-            logger.warning("未配置 OPENROUTER_API_KEY，AI 接待员将使用离线规则引擎。")
-            self.client = None
-        self.model = config.OPENROUTER_MODEL
+        self.llm_router = LLMBackendRouter(config)
+        if not self.llm_router.backends:
+            logger.warning("未发现可用的在线 LLM 提供者，将使用离线规则引擎。")
         self.tools = self._build_tools()
 
     def _build_tools(self) -> List[Dict[str, Any]]:
@@ -252,24 +244,25 @@ class TeaOrderAgent:
             "content": user_text
         })
 
-        if not self.client:
+        if not self.llm_router.backends:
             return self._offline_response(
                 user_text=user_text,
                 current_order_state=current_order_state,
-                reason="未配置 OPENROUTER_API_KEY，暂时使用规则引擎协助点单"
+                reason="未配置 OpenRouter/VLLM，暂时使用规则引擎协助点单"
             )
 
         # 调用 LLM（支持 Function Calling）
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
+            logger.info(f"准备调用 LLM，消息数: {len(messages)}")
+
+            response, provider = await self.llm_router.call_with_fallback(
                 messages=messages,
                 temperature=config.OPENAI_TEMPERATURE,
                 tools=self.tools,
                 tool_choice="auto"
-                # 注意：不能同时使用 response_format + tools，某些 provider 不支持
             )
 
+            logger.info(f"✅ LLM 调用成功，使用后端: {provider.name}")
             message = response.choices[0].message
 
             # 处理 Tool Calls
@@ -277,7 +270,8 @@ class TeaOrderAgent:
                 return await self._handle_tool_calls(
                     messages=messages,
                     tool_calls=message.tool_calls,
-                    current_order_state=current_order_state
+                    current_order_state=current_order_state,
+                    primary_backend=provider
                 )
 
             # 无工具调用，解析正常回复（JSON 格式）
@@ -334,7 +328,7 @@ class TeaOrderAgent:
             return agent_response
 
         except Exception as e:
-            logger.error(f"LLM 调用异常: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"❌ 所有 LLM 后端调用失败: {type(e).__name__}: {e}", exc_info=True)
             logger.warning("LLM 调用失败，切换离线模式：%s", e)
             return self._offline_response(
                 user_text=user_text,
@@ -346,7 +340,8 @@ class TeaOrderAgent:
         self,
         messages: List[Dict[str, Any]],
         tool_calls: Any,
-        current_order_state: OrderState
+        current_order_state: OrderState,
+        primary_backend: Optional[LLMBackend] = None
     ) -> AgentResponse:
         """执行工具调用并获取最终回复"""
         # 添加 assistant 的工具调用消息
@@ -407,13 +402,16 @@ class TeaOrderAgent:
 }"""
         })
 
-        final_response = await self.client.chat.completions.create(
-            model=self.model,
+        logger.info(f"调用 LLM 生成工具调用后的最终回复，消息数: {len(messages)}")
+
+        final_response, provider = await self.llm_router.call_with_fallback(
             messages=messages,
             temperature=config.OPENAI_TEMPERATURE,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            primary=primary_backend
         )
 
+        logger.info(f"✅ 工具调用后 LLM 响应成功，使用后端: {provider.name}")
         final_content = final_response.choices[0].message.content
         if not final_content:
             raise ValueError("工具调用后 LLM 返回空内容")
@@ -466,15 +464,6 @@ class TeaOrderAgent:
 
         else:
             return {"error": f"未知工具: {function_name}"}
-
-    def _build_default_headers(self) -> Dict[str, str]:
-        """构建 OpenRouter 默认请求头"""
-        headers: Dict[str, str] = {}
-        if config.OPENROUTER_SITE_URL:
-            headers["HTTP-Referer"] = config.OPENROUTER_SITE_URL
-        if config.OPENROUTER_SITE_NAME:
-            headers["X-Title"] = config.OPENROUTER_SITE_NAME
-        return headers
 
     def _offline_response(
         self,
