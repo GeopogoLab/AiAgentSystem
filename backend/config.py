@@ -24,6 +24,28 @@ class Config:
     ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2"
     ASSEMBLYAI_TTS_VOICE = os.getenv("ASSEMBLYAI_TTS_VOICE", "alloy")
 
+    # gTTS Fallback Configuration
+    TTS_PROVIDER = os.getenv("TTS_PROVIDER", "assemblyai")  # "assemblyai" or "gtts"
+    GTTS_LANGUAGE = os.getenv("GTTS_LANGUAGE", "en")      # gTTS language
+    GTTS_SLOW = os.getenv("GTTS_SLOW", "false").lower() == "true"  # Slow speech
+
+    # AssemblyAI Streaming STT（补充缺失参数）
+    ASSEMBLYAI_STREAMING_URL = os.getenv(
+        "ASSEMBLYAI_STREAMING_URL",
+        "wss://api.assemblyai.com/v2/realtime/ws"
+    )
+    ASSEMBLYAI_STREAMING_SAMPLE_RATE = int(os.getenv("ASSEMBLYAI_STREAMING_SAMPLE_RATE", "16000"))
+    ASSEMBLYAI_STREAMING_ENCODING = os.getenv("ASSEMBLYAI_STREAMING_ENCODING", "pcm_s16le")
+    ASSEMBLYAI_STREAMING_MODEL = os.getenv("ASSEMBLYAI_STREAMING_MODEL", "best")
+    ASSEMBLYAI_CONNECTION_TIMEOUT = float(os.getenv("ASSEMBLYAI_CONNECTION_TIMEOUT", "3.0"))
+
+    # Whisper 备用 STT（Modal 部署）
+    WHISPER_ENABLED = os.getenv("WHISPER_ENABLED", "true").lower() == "true"
+    WHISPER_SERVICE_URL = os.getenv("WHISPER_SERVICE_URL", "")
+    WHISPER_API_KEY = os.getenv("WHISPER_API_KEY", "")
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
+    WHISPER_TIMEOUT = float(os.getenv("WHISPER_TIMEOUT", "10.0"))
+
     # LLM Provider (OpenRouter 默认)
     OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")

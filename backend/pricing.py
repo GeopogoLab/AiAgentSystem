@@ -4,17 +4,17 @@ from typing import Optional
 from .models import OrderState, TEA_MENU
 
 SIZE_SURCHARGES = {
-    "小杯": 0.0,
-    "中杯": 1.5,
-    "大杯": 3.0,
+    "Small": 0.0,
+    "Medium": 1.5,
+    "Large": 3.0,
 }
 
 TOPPING_PRICES = {
-    "珍珠": 2.0,
-    "布丁": 2.5,
-    "仙草": 2.0,
-    "椰果": 2.0,
-    "芋圆": 3.0,
+    "Pearls": 2.0,
+    "Pudding": 2.5,
+    "Grass Jelly": 2.0,
+    "Coconut Jelly": 2.0,
+    "Taro Balls": 3.0,
 }
 
 DEFAULT_TOPPING_PRICE = 2.0

@@ -1,22 +1,25 @@
-"""FastAPI 后端主服务"""
+"""FastAPI backend main service"""
 import asyncio
 import base64
 import binascii
 from contextlib import asynccontextmanager
 import io
 import json
+import logging
 from datetime import datetime
 import math
 import re
 from typing import Optional
 from urllib.parse import urlencode
 
+logger = logging.getLogger(__name__)
+
 import aiohttp
 import httpx
 from fastapi import FastAPI, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
-# gTTS 为可选依赖，demo 模式用
+# gTTS is optional dependency, for demo mode
 try:
     from gtts import gTTS  # type: ignore
 except ImportError:  # pragma: no cover
@@ -43,35 +46,39 @@ from .agent import tea_agent
 from .production import build_order_progress, build_queue_snapshot, find_progress_in_snapshot
 from .pricing import calculate_order_total
 from .time_utils import parse_timestamp
+from .stt.backends import STTBackendRouter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期"""
-    print("🚀 Tea Order Agent System 启动成功！")
-    print(f"📊 数据库路径: {config.DATABASE_PATH}")
+    """Application lifecycle"""
+    print("🚀 Tea Order Agent System started successfully!")
+    print(f"📊 Database path: {config.DATABASE_PATH}")
     yield
 
 
-# 创建 FastAPI 应用
+# Create FastAPI application
 app = FastAPI(
     title="Tea Order Agent System",
-    description="奶茶点单 AI Agent 系统",
+    description="Tea Order AI Agent System",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# 配置 CORS
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制具体域名
+    allow_origins=["*"],  # Production should limit to specific domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Initialize STT router (manages AssemblyAI / Whisper fallback)
+stt_router = STTBackendRouter(config)
+
 
 def _load_queue_snapshot(limit: int = 50, include_order: Optional[int] = None):
-    """加载队列快照"""
+    """Load queue snapshot"""
     orders = db.get_recent_orders(limit)
     if include_order and not any(order["id"] == include_order for order in orders):
         extra = db.get_order(include_order)
@@ -94,12 +101,12 @@ def _build_order_metadata_snapshot(session_id: str, order_id: int) -> OrderMetad
 
 
 async def _synthesize_with_gtts(text: str, voice: Optional[str] = None) -> TTSResponse:
-    """使用 gTTS 生成语音"""
+    """Generate speech using gTTS"""
     if gTTS is None:
-        raise HTTPException(status_code=500, detail="gTTS 未安装，请运行 pip install gTTS")
+        raise HTTPException(status_code=500, detail="gTTS not installed, please run pip install gTTS")
     lang = config.GTTS_LANGUAGE
     if voice:
-        # 允许 voice 改写 lang，例如 "en" / "zh-CN"
+        # Allow voice to override lang, e.g., "en" / "zh-CN"
         lang = voice
 
     loop = asyncio.get_running_loop()
@@ -120,7 +127,7 @@ async def _synthesize_with_gtts(text: str, voice: Optional[str] = None) -> TTSRe
 
 
 def _order_state_signature(order_state: OrderState) -> tuple:
-    """提取订单状态的核心字段签名用于重复检测"""
+    """Extract core field signature from order state for duplicate detection"""
     def normalize(value: Optional[str]) -> str:
         if value is None:
             return ""
@@ -138,18 +145,18 @@ def _order_state_signature(order_state: OrderState) -> tuple:
 
 
 def _format_progress_answer(order_id: int, progress: OrderProgressResponse) -> str:
-    """生成制作进度的自然语言描述"""
+    """Generate natural language description of production progress"""
     stage = progress.current_stage_label
     if progress.eta_seconds:
         eta_minutes = max(1, math.ceil(progress.eta_seconds / 60))
-        eta_text = f"预计 {eta_minutes} 分钟后完成"
+        eta_text = f"estimated {eta_minutes} minute(s) to completion"
     else:
-        eta_text = "现在即可取餐"
-    return f"订单 #{order_id} 当前处于{stage}阶段，{eta_text}。"
+        eta_text = "ready for pickup now"
+    return f"Order #{order_id} is currently in {stage} stage, {eta_text}."
 
 
 def _extract_order_id_from_text(text: str) -> Optional[int]:
-    """从文本中提取订单号"""
+    """Extract order number from text"""
     match = re.search(r"#?(\d+)", text or "")
     if not match:
         return None
@@ -161,24 +168,24 @@ def _extract_order_id_from_text(text: str) -> Optional[int]:
 
 @app.get("/")
 async def root():
-    """根路径"""
+    """Root path"""
     return {
         "message": "Tea Order Agent System API",
         "version": "1.0.0",
         "endpoints": {
-            "WS /ws/stt": "实时语音识别 WebSocket",
-            "POST /text": "处理文本输入",
-            "GET /orders/{order_id}": "查询订单",
-            "GET /orders": "查询所有订单",
-            "GET /session/{session_id}": "查询会话状态",
-            "POST /reset/{session_id}": "重置会话"
+            "WS /ws/stt": "Real-time speech recognition WebSocket",
+            "POST /text": "Process text input",
+            "GET /orders/{order_id}": "Query order",
+            "GET /orders": "Query all orders",
+            "GET /session/{session_id}": "Query session state",
+            "POST /reset/{session_id}": "Reset session"
         }
     }
 
 
 @app.get("/health")
 async def health():
-    """健康检查"""
+    """Health check"""
     db_status = "ok"
     try:
         with db.get_connection() as conn:
@@ -197,20 +204,20 @@ async def health():
 @app.post("/text", response_model=TalkResponse)
 async def text(session_id: str = Form(...), text: str = Form(...)):
     """
-    处理文本输入（测试用，不需要语音）
+    Process text input (for testing, no voice needed)
 
-    这个接口方便开发和测试，可以直接发送文本而不需要录音
+    This endpoint is convenient for development and testing, allowing direct text submission without recording
     """
     return await _process_text(session_id, text)
 
 
 async def _process_text(session_id: str, user_text: str) -> TalkResponse:
     """
-    处理文本的核心逻辑
+    Core logic for processing text
 
     Args:
-        session_id: 会话 ID
-        user_text: 用户输入的文本
+        session_id: Session ID
+        user_text: User input text
 
     Returns:
         TalkResponse
@@ -487,142 +494,205 @@ async def text_to_speech(request: TTSRequest):
 
 @app.websocket("/ws/stt")
 async def realtime_stt_ws(websocket: WebSocket):
-    """AssemblyAI 实时语音识别转发，并在最终文本时触发会话逻辑"""
+    """实时语音识别 WebSocket（透明降级：AssemblyAI → Whisper）"""
     await websocket.accept()
-    if not config.ASSEMBLYAI_API_KEY:
-        await websocket.send_json({"error": "ASSEMBLYAI_API_KEY 未配置"})
+
+    # 获取 primary/fallback（统一接口）
+    primary = stt_router.primary
+    fallback = stt_router.fallback
+
+    if not primary:
+        await websocket.send_json({"error": "未配置 STT 服务（需要 ASSEMBLYAI_API_KEY 或 WHISPER_SERVICE_URL）"})
         await websocket.close()
         return
 
-    params = {
-        "sample_rate": config.ASSEMBLYAI_STREAMING_SAMPLE_RATE,
-        "encoding": config.ASSEMBLYAI_STREAMING_ENCODING,
-        "speech_model": config.ASSEMBLYAI_STREAMING_MODEL,
-    }
-    assembly_uri = f"{config.ASSEMBLYAI_STREAMING_URL}?{urlencode(params)}"
-    headers = {
-        "Authorization": config.ASSEMBLYAI_API_KEY,
-        "Accept": "application/json",
-    }
     session_id = websocket.query_params.get("session_id")
 
-    async def send_client(payload: dict):
-        if websocket.client_state != WebSocketState.CONNECTED:
-            return
-        try:
-            await websocket.send_json(payload)
-        except WebSocketDisconnect:
-            pass
-        except RuntimeError:
-            pass
+    # 尝试连接后端（primary → fallback）
+    for backend in [primary, fallback]:
+        if backend is None:
+            continue
 
-    async def forward_client(to_ws: aiohttp.ClientWebSocketResponse):
         try:
-            while True:
-                message = await websocket.receive_text()
-                payload = json.loads(message)
-                if payload.get("event") == "flush":
-                    await to_ws.close()
-                    break
-                audio_data = payload.get("audio_data")
-                if audio_data:
+            logger.info(f"尝试连接 {backend.name} STT 服务...")
+
+            # 统一超时检测（覆盖连接+运行时）
+            async with asyncio.timeout(backend.timeout):
+                await _connect_stt_backend(websocket, backend, session_id)
+                return  # 成功，结束
+
+        except (asyncio.TimeoutError, aiohttp.ClientError, Exception) as exc:
+            # 所有错误统一处理
+            logger.warning(f"⚠️ {backend.name} 失败: {type(exc).__name__}: {exc}")
+
+            # 如果不是最后一个后端，尝试降级
+            if backend == primary and fallback:
+                await websocket.send_json({
+                    "message_type": "fallback_notice",
+                    "from": backend.name,
+                    "to": fallback.name,
+                    "reason": f"{type(exc).__name__}"
+                })
+                continue  # 尝试 fallback
+            else:
+                # 最后一个后端也失败了
+                await websocket.send_json({"error": f"所有 STT 后端失败: {exc}"})
+                await websocket.close()
+                return
+
+
+async def _connect_stt_backend(websocket: WebSocket, backend, session_id: Optional[str]):
+    """透明代理：连接 STT 后端并双向转发（AssemblyAI/Whisper 通用）"""
+
+    # 构建 WebSocket URL（AssemblyAI 需要查询参数）
+    ws_url = backend.websocket_url
+    if backend.name == "assemblyai":
+        params = {
+            "sample_rate": config.ASSEMBLYAI_STREAMING_SAMPLE_RATE,
+            "encoding": config.ASSEMBLYAI_STREAMING_ENCODING,
+            "speech_model": config.ASSEMBLYAI_STREAMING_MODEL,
+        }
+        ws_url = f"{ws_url}?{urlencode(params)}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(ws_url, headers=backend.headers, heartbeat=15) as remote_ws:
+            logger.info(f"✅ 成功连接到 {backend.name}")
+
+            # 辅助函数：安全发送给客户端
+            async def send_client(payload: dict):
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    return
+                try:
+                    await websocket.send_json(payload)
+                except (WebSocketDisconnect, RuntimeError):
+                    pass
+
+            # 辅助函数：触发 Agent 响应
+            async def dispatch_agent_response(text: str):
+                if not session_id or not text.strip():
+                    return
+
+                async def safe_process():
                     try:
-                        audio_bytes = base64.b64decode(audio_data)
-                    except (ValueError, binascii.Error):
-                        continue
-                    if audio_bytes:
-                        await to_ws.send_bytes(audio_bytes)
-        except WebSocketDisconnect:
-            await to_ws.close()
-
-    async def dispatch_agent_response(text: str):
-        if not session_id or not text.strip():
-            return
-
-        async def safe_process():
-            try:
-                response = await _process_text(session_id, text)
-                await send_client({
-                    "message_type": "agent_response",
-                    "payload": jsonable_encoder(response),
-                })
-            except HTTPException as exc:
-                await send_client({
-                    "message_type": "agent_response_error",
-                    "detail": exc.detail,
-                })
-            except Exception as exc:
-                await send_client({
-                    "message_type": "agent_response_error",
-                    "detail": str(exc),
-                })
-
-        asyncio.create_task(safe_process())
-
-    processed_turns: set[int] = set()
-
-    async def forward_assembly(from_ws: aiohttp.ClientWebSocketResponse):
-        try:
-            async for msg in from_ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        await send_client({"message_type": "assembly_raw", "payload": msg.data})
-                        continue
-                    data_type = data.get("type")
-                    if data_type == "Begin":
+                        response = await _process_text(session_id, text)
                         await send_client({
-                            "message_type": "assembly_session",
-                            "session_id": data.get("id"),
-                            "expires_at": data.get("expires_at"),
+                            "message_type": "agent_response",
+                            "payload": jsonable_encoder(response),
                         })
-                        continue
-                    if data_type == "Termination":
+                    except HTTPException as exc:
                         await send_client({
-                            "message_type": "assembly_termination",
-                            "reason": data.get("reason"),
+                            "message_type": "agent_response_error",
+                            "detail": exc.detail,
                         })
-                        continue
-                    if data_type != "Turn":
-                        await send_client({"message_type": "assembly_raw", "payload": data})
-                        continue
+                    except Exception as exc:
+                        await send_client({
+                            "message_type": "agent_response_error",
+                            "detail": str(exc),
+                        })
 
-                    transcript = data.get("transcript") or ""
-                    if transcript:
-                        await send_client({"message_type": "partial_transcript", "text": transcript})
+                asyncio.create_task(safe_process())
 
-                    turn_order = data.get("turn_order")
-                    final_text = (data.get("utterance") or transcript or "").strip()
-                    if (
-                        data.get("end_of_turn")
-                        and final_text
-                        and turn_order is not None
-                        and turn_order not in processed_turns
-                    ):
-                        processed_turns.add(turn_order)
-                        await send_client({"message_type": "final_transcript", "text": final_text})
-                        await dispatch_agent_response(final_text)
-                elif msg.type == aiohttp.WSMsgType.BINARY:
-                    await websocket.send_bytes(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
-                    break
-        except WebSocketDisconnect:
-            pass
+            # 双向转发
+            async def forward_client_to_remote():
+                """前端 → 后端"""
+                try:
+                    while True:
+                        message = await websocket.receive_text()
+                        data = json.loads(message)
 
-    try:
-        async with aiohttp.ClientSession() as aiohttp_session:
-            async with aiohttp_session.ws_connect(assembly_uri, headers=headers, heartbeat=15) as assembly_ws:
-                await asyncio.gather(
-                    forward_client(assembly_ws),
-                    forward_assembly(assembly_ws),
-                )
-    except asyncio.CancelledError:
-        raise
-    except aiohttp.ClientError as exc:
-        await send_client({"error": f"连接 AssemblyAI 失败: {exc}"})
-    except Exception as exc:
-        await send_client({"error": str(exc)})
+                        if data.get("event") == "flush":
+                            await remote_ws.close()
+                            break
+
+                        audio_data = data.get("audio_data")
+                        if audio_data:
+                            try:
+                                audio_bytes = base64.b64decode(audio_data)
+                                if audio_bytes:
+                                    # AssemblyAI 需要二进制，Whisper 需要 JSON
+                                    if backend.name == "assemblyai":
+                                        await remote_ws.send_bytes(audio_bytes)
+                                    else:  # whisper
+                                        await remote_ws.send_str(json.dumps({"audio_data": audio_data}))
+                            except (ValueError, binascii.Error):
+                                continue
+                except WebSocketDisconnect:
+                    await remote_ws.close()
+
+            async def forward_remote_to_client():
+                """后端 → 前端（处理不同协议）"""
+                processed_turns: set[int] = set()  # AssemblyAI 去重
+
+                try:
+                    async for msg in remote_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                data = json.loads(msg.data)
+                            except json.JSONDecodeError:
+                                await send_client({"message_type": "stt_raw", "payload": msg.data})
+                                continue
+
+                            # AssemblyAI 协议处理
+                            if backend.name == "assemblyai":
+                                data_type = data.get("type")
+                                if data_type == "Begin":
+                                    await send_client({
+                                        "message_type": "assembly_session",
+                                        "session_id": data.get("id"),
+                                        "expires_at": data.get("expires_at"),
+                                    })
+                                    continue
+                                if data_type == "Termination":
+                                    await send_client({
+                                        "message_type": "assembly_termination",
+                                        "reason": data.get("reason"),
+                                    })
+                                    continue
+                                if data_type != "Turn":
+                                    await send_client({"message_type": "assembly_raw", "payload": data})
+                                    continue
+
+                                # Turn 事件处理
+                                transcript = data.get("transcript") or ""
+                                if transcript:
+                                    await send_client({"message_type": "partial_transcript", "text": transcript})
+
+                                turn_order = data.get("turn_order")
+                                final_text = (data.get("utterance") or transcript or "").strip()
+                                if (
+                                    data.get("end_of_turn")
+                                    and final_text
+                                    and turn_order is not None
+                                    and turn_order not in processed_turns
+                                ):
+                                    processed_turns.add(turn_order)
+                                    await send_client({"message_type": "final_transcript", "text": final_text})
+                                    await dispatch_agent_response(final_text)
+
+                            # Whisper 协议处理（简单）
+                            else:
+                                # 透传所有消息
+                                await send_client(data)
+
+                                # 检测 final_transcript，触发 Agent
+                                if data.get("message_type") == "final_transcript":
+                                    text = data.get("text", "").strip()
+                                    if text:
+                                        logger.info(f"收到最终识别: {text}")
+                                        await dispatch_agent_response(text)
+
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await websocket.send_bytes(msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                            break
+                except WebSocketDisconnect:
+                    pass
+
+            # 并发双向转发
+            await asyncio.gather(
+                forward_client_to_remote(),
+                forward_remote_to_client()
+            )
 
 
 # 如果需要服务前端静态文件

@@ -1,4 +1,4 @@
-"""订单制作进度计算"""
+"""Order production progress calculation"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -13,18 +13,18 @@ from .models import (
 from .time_utils import parse_timestamp
 
 STAGE_DEFINITIONS = [
-    {"stage": ProductionStage.QUEUED, "label": "排队中", "duration": 30},
-    {"stage": ProductionStage.BREWING, "label": "制作中", "duration": 120},
-    {"stage": ProductionStage.SEALING, "label": "封杯打包", "duration": 45},
-    {"stage": ProductionStage.READY, "label": "可取餐", "duration": 0},
+    {"stage": ProductionStage.QUEUED, "label": "Queued", "duration": 30},
+    {"stage": ProductionStage.BREWING, "label": "Brewing", "duration": 120},
+    {"stage": ProductionStage.SEALING, "label": "Sealing", "duration": 45},
+    {"stage": ProductionStage.READY, "label": "Ready", "duration": 0},
 ]
 
 
 def build_order_progress(order: Dict, reference_time: Optional[datetime] = None) -> OrderProgressResponse:
-    """根据订单创建时间计算制作进度"""
+    """Calculate production progress based on order creation time"""
     created_at = order.get("created_at")
     if not created_at:
-        raise ValueError("订单缺少 created_at 字段")
+        raise ValueError("Order missing created_at field")
 
     order_created_at = parse_timestamp(created_at)
     now = reference_time or datetime.utcnow()
@@ -87,7 +87,7 @@ def build_order_progress(order: Dict, reference_time: Optional[datetime] = None)
         total_duration_seconds=total_duration,
         is_completed=is_completed,
         timeline=timeline_items,
-        # 订单详情
+        # Order details
         drink_name=order.get("drink_name"),
         size=order.get("size"),
         sugar=order.get("sugar"),
@@ -97,7 +97,7 @@ def build_order_progress(order: Dict, reference_time: Optional[datetime] = None)
 
 
 def build_queue_snapshot(orders: List[Dict], reference_time: Optional[datetime] = None) -> ProductionQueueSnapshot:
-    """构建排队面板快照"""
+    """Build queue panel snapshot"""
     now = reference_time or datetime.utcnow()
     if not orders:
         return ProductionQueueSnapshot(
@@ -106,7 +106,7 @@ def build_queue_snapshot(orders: List[Dict], reference_time: Optional[datetime] 
             completed_orders=[],
         )
 
-    # 使用降序排列，确保最新的订单在前面
+    # Use descending order to ensure newest orders are first
     sorted_orders = sorted(
         orders,
         key=lambda order: parse_timestamp(order["created_at"]) if order.get("created_at") else now,

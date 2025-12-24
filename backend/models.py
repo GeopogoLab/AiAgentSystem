@@ -154,18 +154,18 @@ class Menu(BaseModel):
     base_price: float
 
 
-# 奶茶菜单数据
+# Tea Menu Data
 TEA_MENU = [
-    Menu(name="乌龙奶茶", category="奶茶", description="经典乌龙茶配奶", base_price=15.0),
-    Menu(name="茉莉奶绿", category="奶茶", description="清新茉莉绿茶", base_price=15.0),
-    Menu(name="红茶拿铁", category="奶茶", description="浓郁红茶奶", base_price=16.0),
-    Menu(name="抹茶拿铁", category="抹茶", description="日式抹茶", base_price=18.0),
-    Menu(name="黑糖珍珠奶茶", category="奶茶", description="黑糖风味珍珠", base_price=18.0),
-    Menu(name="芝士奶盖", category="奶盖", description="浓香芝士", base_price=20.0),
+    Menu(name="Oolong Milk Tea", category="Milk Tea", description="Classic oolong with milk", base_price=15.0),
+    Menu(name="Jasmine Green Tea", category="Milk Tea", description="Fresh jasmine green tea", base_price=15.0),
+    Menu(name="Black Tea Latte", category="Milk Tea", description="Rich black tea with milk", base_price=16.0),
+    Menu(name="Matcha Latte", category="Matcha", description="Japanese-style matcha", base_price=18.0),
+    Menu(name="Brown Sugar Pearl Milk Tea", category="Milk Tea", description="Brown sugar flavor with pearls", base_price=18.0),
+    Menu(name="Cheese Foam Tea", category="Cheese Foam", description="Rich cheese foam", base_price=20.0),
 ]
 
-# 配置选项
-SIZE_OPTIONS = ["小杯", "中杯", "大杯"]
-SUGAR_OPTIONS = ["无糖", "三分糖", "五分糖", "七分糖", "全糖"]
-ICE_OPTIONS = ["去冰", "少冰", "正常冰", "多冰"]
-TOPPING_OPTIONS = ["珍珠", "布丁", "仙草", "椰果", "芋圆"]
+# Configuration Options
+SIZE_OPTIONS = ["Small", "Medium", "Large"]
+SUGAR_OPTIONS = ["No Sugar", "30% Sweet", "50% Sweet", "70% Sweet", "Full Sugar"]
+ICE_OPTIONS = ["No Ice", "Less Ice", "Regular Ice", "Extra Ice"]
+TOPPING_OPTIONS = ["Pearls", "Pudding", "Grass Jelly", "Coconut Jelly", "Taro Balls"]

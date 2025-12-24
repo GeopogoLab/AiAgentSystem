@@ -1,4 +1,4 @@
-"""SQLite 数据库操作"""
+"""SQLite database operations"""
 import sqlite3
 import json
 from typing import Optional, Dict, Any
@@ -9,21 +9,21 @@ from .time_utils import parse_timestamp
 
 
 class Database:
-    """数据库管理类"""
+    """Database management class"""
 
     def __init__(self, db_path: str = None):
-        """初始化数据库连接"""
+        """Initialize database connection"""
         self.db_path = db_path or config.DATABASE_PATH
         self.init_db()
 
     def get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接"""
+        """Get database connection"""
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # 返回字典形式的行
+        conn.row_factory = sqlite3.Row  # Return rows as dictionaries
         return conn
 
     def init_db(self):
-        """初始化数据库表"""
+        """Initialize database tables"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -42,21 +42,21 @@ class Database:
 
     def save_order(self, session_id: str, order_state: OrderState) -> int:
         """
-        保存订单到数据库
+        Save order to database
 
         Args:
-            session_id: 会话 ID
-            order_state: 订单状态对象
+            session_id: Session ID
+            order_state: Order state object
 
         Returns:
-            订单 ID
+            Order ID
         """
         missing_fields = [
             field for field in ("drink_name", "size", "sugar", "ice")
             if not getattr(order_state, field)
         ]
         if missing_fields:
-            raise ValueError(f"订单信息不完整，缺少字段：{', '.join(missing_fields)}")
+            raise ValueError(f"Order information incomplete, missing fields: {', '.join(missing_fields)}")
 
         toppings_json = json.dumps(order_state.toppings or [], ensure_ascii=False)
 
@@ -79,13 +79,13 @@ class Database:
 
     def get_order(self, order_id: int) -> Optional[Dict[str, Any]]:
         """
-        根据 ID 获取订单
+        Get order by ID
 
         Args:
-            order_id: 订单 ID
+            order_id: Order ID
 
         Returns:
-            订单信息字典，不存在则返回 None
+            Order information dictionary, or None if not found
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -99,13 +99,13 @@ class Database:
 
     def get_orders_by_session(self, session_id: str) -> list:
         """
-        获取某个会话的所有订单
+        Get all orders for a session
 
         Args:
-            session_id: 会话 ID
+            session_id: Session ID
 
         Returns:
-            订单列表
+            List of orders
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -119,13 +119,13 @@ class Database:
 
     def get_all_orders(self, limit: int = 100) -> list:
         """
-        获取所有订单
+        Get all orders
 
         Args:
-            limit: 返回数量限制
+            limit: Return limit
 
         Returns:
-            订单列表
+            List of orders
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -139,13 +139,13 @@ class Database:
 
     def get_recent_orders(self, limit: int = 50) -> list:
         """
-        获取最近的订单列表
+        Get recent orders list
 
         Args:
-            limit: 返回数量
+            limit: Return count
 
         Returns:
-            订单列表
+            List of orders
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -158,7 +158,7 @@ class Database:
         return [self._serialize_order(row) for row in rows]
 
     def _serialize_order(self, row: sqlite3.Row) -> Dict[str, Any]:
-        """将数据库行转换为字典"""
+        """Convert database row to dictionary"""
         order = dict(row)
         order['toppings'] = json.loads(order['toppings']) if order['toppings'] else []
         created_at = order.get('created_at')

@@ -1,4 +1,4 @@
-"""LLM Agent 点单逻辑"""
+"""LLM Agent ordering logic"""
 import json
 import logging
 from typing import List, Dict, Optional, Any
@@ -21,29 +21,29 @@ logger = logging.getLogger(__name__)
 
 
 class TeaOrderAgent:
-    """奶茶点单 Agent（支持 Function Calling）"""
+    """Tea ordering agent (supports Function Calling)"""
 
     def __init__(self):
-        """初始化 Agent"""
+        """Initialize agent"""
         self.llm_router = LLMBackendRouter(config)
         if not self.llm_router.backends:
-            logger.warning("未发现可用的在线 LLM 提供者，将使用离线规则引擎。")
+            logger.warning("No online LLM providers available, will use offline rule engine.")
         self.tools = self._build_tools()
 
     def _build_tools(self) -> List[Dict[str, Any]]:
-        """构建 Function Calling 工具定义"""
+        """Build Function Calling tool definitions"""
         return [
             {
                 "type": "function",
                 "function": {
                     "name": "get_order_status",
-                    "description": "查询指定订单的制作进度、预计完成时间（ETA）和订单详情（饮品名、规格等）",
+                    "description": "Query the production progress, estimated completion time (ETA), and order details (drink name, specs, etc.) for a specific order",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "order_id": {
                                 "type": "integer",
-                                "description": "订单编号，例如 5 表示订单 #5"
+                                "description": "Order number, e.g., 5 means order #5"
                             }
                         },
                         "required": ["order_id"]
@@ -54,7 +54,7 @@ class TeaOrderAgent:
                 "type": "function",
                 "function": {
                     "name": "get_all_orders_queue",
-                    "description": "查看当前所有订单的排队和制作状态。当用户询问'目前订单有哪些'、'有多少订单'、'订单列表'、'所有订单'等问题时，必须调用此工具获取真实数据。返回包括活跃订单和最近完成订单的信息（编号、阶段、预计完成时间、订单内容）。",
+                    "description": "View the queue and production status of all current orders. When users ask 'what orders are there', 'how many orders', 'order list', 'all orders', etc., must call this tool to get real data. Returns information about active orders and recently completed orders (number, stage, estimated completion time, order content).",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -65,146 +65,146 @@ class TeaOrderAgent:
         ]
 
     def _build_system_prompt(self) -> str:
-        """构建系统提示词"""
-        menu_list = "\n".join([f"- {item.name}（{item.category}）: {item.description}, ¥{item.base_price}" for item in TEA_MENU])
+        """Build system prompt"""
+        menu_list = "\n".join([f"- {item.name} ({item.category}): {item.description}, ${item.base_price}" for item in TEA_MENU])
 
-        return f"""你是一个专业的奶茶店接待员，负责帮助顾客点单和查询订单进度。
+        return f"""You are a professional tea shop attendant, responsible for helping customers place orders and check order progress.
 
-⚠️ **重要：你必须严格按照 JSON 格式回复，任何回复都必须是有效的 JSON 对象！**
+⚠️ **IMPORTANT: You MUST respond strictly in JSON format. All responses MUST be valid JSON objects!**
 
-你的任务是：
+Your tasks:
 
-1. **角色定位**：
-   - 使用友好、热情的中文与顾客对话
-   - 态度专业，帮助顾客做出选择
-   - 每次只问 1-2 个关键问题，不要一次问太多
-   - **所有回复必须是 JSON 格式，不能是纯文本**
+1. **Role**:
+   - Communicate with customers in friendly, warm English
+   - Be professional and help customers make choices
+   - Ask only 1-2 key questions at a time, don't ask too many at once
+   - **All responses MUST be in JSON format, NOT plain text**
 
-2. **菜单信息**：
+2. **Menu Information**:
 {menu_list}
 
-3. **配置选项**：
-   - 杯型：{', '.join(SIZE_OPTIONS)}
-   - 甜度：{', '.join(SUGAR_OPTIONS)}
-   - 冰块：{', '.join(ICE_OPTIONS)}
-   - 加料：{', '.join(TOPPING_OPTIONS)}
+3. **Configuration Options**:
+   - Size: {', '.join(SIZE_OPTIONS)}
+   - Sweetness: {', '.join(SUGAR_OPTIONS)}
+   - Ice: {', '.join(ICE_OPTIONS)}
+   - Add-ons: {', '.join(TOPPING_OPTIONS)}
 
-4. **工具使用**（重要）：
-   当顾客询问订单进度或排队情况时，你**必须**调用工具获取实时数据，**不要**编造或猜测进度信息：
+4. **Tool Usage** (Important):
+   When customers inquire about order progress or queue status, you **MUST** call tools to get real-time data. **DO NOT** fabricate or guess progress information:
 
-   **何时调用 get_all_orders_queue()**：
-   - 当顾客询问所有订单、订单列表、排队情况时，**必须**调用此工具
-   - 触发词示例："目前订单有哪些"、"有多少订单"、"现在队伍排到哪了"、"订单列表"、"所有订单"、"现在有几单"
-   - **关键**：不要猜测或说"没有订单"，必须先调用工具查询真实数据
+   **When to call get_all_orders_queue()**:
+   - When customers ask about all orders, order list, queue status, **MUST** call this tool
+   - Example triggers: "what orders are there", "how many orders", "where's the queue at", "order list", "all orders", "how many orders now"
+   - **Key**: Don't guess or say "no orders", MUST call tool to query real data first
 
-   **何时调用 get_order_status(order_id)**：
-   - 询问具体订单进度时（例如"订单 #5 做好了吗"、"查一下我的订单"、"52呢"、"#52"），**必须先**调用此工具查询
-   - **关键**：即使订单号不在当前会话中创建，也要先调用工具查询，不要直接说"不存在"
-   - 如果工具调用失败（订单真的不存在），才告诉顾客"订单不存在"
+   **When to call get_order_status(order_id)**:
+   - When asking about specific order progress (e.g., "is order #5 ready", "check my order", "52?", "#52"), **MUST** call this tool first
+   - **Key**: Even if the order number wasn't created in current session, call tool first, don't directly say "doesn't exist"
+   - Only if tool call fails (order truly doesn't exist), then tell customer "order doesn't exist"
 
-   **工具调用后的处理**：
-   - 调用工具后，根据返回的数据用自然语言回答顾客
-   - **重要**：工具会返回订单的详细信息（饮品名、规格、加料等），当顾客询问"这个订单是啥"、"订单内容"、"是什么"时，你必须从工具返回的数据中提取并告诉顾客订单的具体内容
-   - 如果顾客说"我的订单"但没有提供订单号，且当前 order_state.is_complete=false（正在点单），说明是在询问刚下的订单，礼貌询问订单号
+   **After Tool Calls**:
+   - After calling tool, answer customer in natural language based on returned data
+   - **Important**: Tool returns detailed order information (drink name, specs, add-ons, etc.). When customers ask "what is this order", "order content", "what is it", you MUST extract from tool data and tell customer the specific order content
+   - If customer says "my order" without providing order number, and current order_state.is_complete=false (ordering in progress), they're asking about just-placed order, politely ask for order number
 
-5. **收集信息**（点单时）：
-   当顾客要点单时，收集以下订单信息：
-   - drink_name: 饮品名称（必须）
-   - size: 杯型（必须）
-   - sugar: 甜度（必须）
-   - ice: 冰块（必须）
-   - toppings: 加料列表（可选，默认为空）
-   - notes: 备注（可选）
+5. **Collect Information** (When Ordering):
+   When customers want to order, collect the following information:
+   - drink_name: Drink name (required)
+   - size: Size (required)
+   - sugar: Sweetness (required)
+   - ice: Ice level (required)
+   - toppings: Add-ons list (optional, default empty)
+   - notes: Notes (optional)
 
-6. **对话规则**：
-   - 如果顾客询问进度，优先调用工具，不要编造数据
-   - 如果顾客要点单，按照收集信息流程进行
-   - 如果顾客说的饮品不在菜单上，礼貌地提示并推荐菜单上的饮品
-   - 如果信息不完整，继续询问缺失的字段
-   - 如果有歧义，复述确认
-   - 当所有必填信息收集齐全时，向顾客总结订单并询问是否确认
-   - 顾客确认后，明确表示订单已完成
+6. **Conversation Rules**:
+   - If customer asks about progress, prioritize calling tools, don't fabricate data
+   - If customer wants to order, follow information collection process
+   - If drink isn't on menu, politely inform and recommend menu items
+   - If information incomplete, continue asking for missing fields
+   - If ambiguous, repeat back for confirmation
+   - When all required info is collected, summarize order and ask customer to confirm
+   - After customer confirms, clearly indicate order is complete
 
-7. **输出格式**（非常重要！）：
+7. **Output Format** (Very Important!):
 
-   无论什么情况，你的回复**必须是有效的 JSON 对象**，包含以下三个字段：
+   In all cases, your response **MUST be a valid JSON object** containing these three fields:
    {{
-       "assistant_reply": "给顾客的回复文本",
-       "order_state": {{...订单状态对象...}},
-       "action": "动作类型"
+       "assistant_reply": "reply text to customer",
+       "order_state": {{...order state object...}},
+       "action": "action type"
    }}
 
-   **点单模式**（顾客正在点单时）：
-   - assistant_reply: 给顾客的回复（中文字符串）
-   - order_state: 当前订单状态（JSON 对象）
-   - action: 下一步动作（字符串）
+   **Ordering Mode** (customer is placing order):
+   - assistant_reply: Reply to customer (English string)
+   - order_state: Current order state (JSON object)
+   - action: Next action (string)
 
-   action 的可能值：
-   - "ask_more": 信息未收集齐全，继续询问
-   - "confirm": 信息已齐全，复述订单等待顾客确认
-   - "save_order": 顾客已确认，可以保存订单
+   Possible action values:
+   - "ask_more": Information incomplete, continue asking
+   - "confirm": Information complete, repeat order and wait for customer confirmation
+   - "save_order": Customer confirmed, can save order
 
-   **查询模式**（顾客询问进度时）：
-   - 使用工具调用（get_order_status 或 get_all_orders_queue）获取数据
-   - 工具调用会自动处理，你只需要按照工具指示操作
-   - 不要直接返回 JSON，而是调用工具
+   **Query Mode** (customer asking about progress):
+   - Use tool calls (get_order_status or get_all_orders_queue) to get data
+   - Tool calls handled automatically, you just follow tool instructions
+   - Don't return JSON directly, call tool instead
 
-   order_state 的格式：
+   order_state format:
    {{
-       "drink_name": "饮品名称或null",
-       "size": "杯型或null",
-       "sugar": "甜度或null",
-       "ice": "冰块或null",
-       "toppings": ["加料1", "加料2"],
-       "notes": "备注或null",
+       "drink_name": "drink name or null",
+       "size": "size or null",
+       "sugar": "sweetness or null",
+       "ice": "ice level or null",
+       "toppings": ["topping1", "topping2"],
+       "notes": "notes or null",
        "is_complete": true/false
    }}
 
-7. **示例对话**：
+7. **Example Conversation**:
 
-   顾客："我要一杯奶茶"
-   回复：
+   Customer: "I'd like a milk tea"
+   Response:
    {{
-       "assistant_reply": "好的！请问您想要哪一款呢？我们有乌龙奶茶、茉莉奶绿、红茶拿铁等。",
+       "assistant_reply": "Great! Which one would you like? We have Oolong Milk Tea, Jasmine Green Tea, Black Tea Latte, etc.",
        "order_state": {{"drink_name": null, "size": null, "sugar": null, "ice": null, "toppings": [], "notes": null, "is_complete": false}},
        "action": "ask_more"
    }}
 
-   顾客："乌龙奶茶"
-   回复：
+   Customer: "Oolong Milk Tea"
+   Response:
    {{
-       "assistant_reply": "好的，乌龙奶茶！请问您要什么杯型？我们有小杯、中杯、大杯。甜度和冰块呢？",
-       "order_state": {{"drink_name": "乌龙奶茶", "size": null, "sugar": null, "ice": null, "toppings": [], "notes": null, "is_complete": false}},
+       "assistant_reply": "Sounds good, Oolong Milk Tea! What size would you like? We have Small, Medium, Large. And how about sweetness and ice?",
+       "order_state": {{"drink_name": "Oolong Milk Tea", "size": null, "sugar": null, "ice": null, "toppings": [], "notes": null, "is_complete": false}},
        "action": "ask_more"
    }}
 
-   顾客："大杯，三分糖，去冰"
-   回复：
+   Customer: "Large, 30% sweet, no ice"
+   Response:
    {{
-       "assistant_reply": "好的！为您确认一下：大杯乌龙奶茶，三分糖，去冰。请问需要加料吗？比如珍珠、布丁、仙草等。",
-       "order_state": {{"drink_name": "乌龙奶茶", "size": "大杯", "sugar": "三分糖", "ice": "去冰", "toppings": [], "notes": null, "is_complete": false}},
+       "assistant_reply": "Perfect! Let me confirm: Large Oolong Milk Tea, 30% sweet, no ice. Would you like any add-ons? Like pearls, pudding, grass jelly, etc.",
+       "order_state": {{"drink_name": "Oolong Milk Tea", "size": "Large", "sugar": "30% Sweet", "ice": "No Ice", "toppings": [], "notes": null, "is_complete": false}},
        "action": "ask_more"
    }}
 
-   顾客："加珍珠"
-   回复：
+   Customer: "Add pearls"
+   Response:
    {{
-       "assistant_reply": "好的！为您下单：大杯乌龙奶茶，三分糖，去冰，加珍珠。请问确认下单吗？",
-       "order_state": {{"drink_name": "乌龙奶茶", "size": "大杯", "sugar": "三分糖", "ice": "去冰", "toppings": ["珍珠"], "notes": null, "is_complete": true}},
+       "assistant_reply": "Great! Your order: Large Oolong Milk Tea, 30% sweet, no ice, with pearls. Ready to confirm?",
+       "order_state": {{"drink_name": "Oolong Milk Tea", "size": "Large", "sugar": "30% Sweet", "ice": "No Ice", "toppings": ["Pearls"], "notes": null, "is_complete": true}},
        "action": "confirm"
    }}
 
-   顾客："确认"
-   回复：
+   Customer: "Yes, confirm"
+   Response:
    {{
-       "assistant_reply": "好的，订单已确认！您的订单是：大杯乌龙奶茶，三分糖，去冰，加珍珠。请稍等，马上为您准备！",
-       "order_state": {{"drink_name": "乌龙奶茶", "size": "大杯", "sugar": "三分糖", "ice": "去冰", "toppings": ["珍珠"], "notes": null, "is_complete": true}},
+       "assistant_reply": "Perfect, order confirmed! Your order: Large Oolong Milk Tea, 30% sweet, no ice, with pearls. Please wait a moment, we'll prepare it right away!",
+       "order_state": {{"drink_name": "Oolong Milk Tea", "size": "Large", "sugar": "30% Sweet", "ice": "No Ice", "toppings": ["Pearls"], "notes": null, "is_complete": true}},
        "action": "save_order"
    }}
 
-⚠️ **再次提醒：你的回复必须是完整的、有效的 JSON 对象。不要返回纯文本，不要在 JSON 外添加任何解释。**
+⚠️ **Reminder: Your response MUST be a complete, valid JSON object. Don't return plain text, don't add any explanations outside JSON.**
 
-如果顾客询问进度，使用工具调用而不是直接回复。"""
+If customer asks about progress, use tool calls instead of direct response."""
 
     async def process(
         self,
@@ -248,12 +248,12 @@ class TeaOrderAgent:
             return self._offline_response(
                 user_text=user_text,
                 current_order_state=current_order_state,
-                reason="未配置 OpenRouter/VLLM，暂时使用规则引擎协助点单"
+                reason="OpenRouter/VLLM not configured, temporarily using rule engine for ordering"
             )
 
-        # 调用 LLM（支持 Function Calling）
+        # Call LLM (supports Function Calling)
         try:
-            logger.info(f"准备调用 LLM，消息数: {len(messages)}")
+            logger.info(f"Preparing to call LLM, message count: {len(messages)}")
 
             response, provider = await self.llm_router.call_with_fallback(
                 messages=messages,
@@ -262,7 +262,7 @@ class TeaOrderAgent:
                 tool_choice="auto"
             )
 
-            logger.info(f"✅ LLM 调用成功，使用后端: {provider.name}")
+            logger.info(f"✅ LLM call successful, using backend: {provider.name}")
             message = response.choices[0].message
 
             # 处理 Tool Calls
@@ -274,32 +274,32 @@ class TeaOrderAgent:
                     primary_backend=provider
                 )
 
-            # 无工具调用，解析正常回复（JSON 格式）
+            # No tool calls, parse normal response (JSON format)
             if not message.content:
-                raise ValueError("LLM 返回空内容")
+                raise ValueError("LLM returned empty content")
 
-            # 尝试解析 JSON（可能包裹在 ```json 或其他文本中）
+            # Try to parse JSON (may be wrapped in ```json or other text)
             content = message.content.strip()
 
-            # 提取 JSON 部分
+            # Extract JSON part
             json_str = content
             if "```json" in content:
-                # 提取 ```json ... ``` 之间的内容
+                # Extract content between ```json ... ```
                 start = content.find("```json") + 7
                 end = content.find("```", start)
                 if end > start:
                     json_str = content[start:end].strip()
             elif "```" in content:
-                # 提取 ``` ... ``` 之间的内容
+                # Extract content between ``` ... ```
                 start = content.find("```") + 3
                 end = content.find("```", start)
                 if end > start:
                     json_str = content[start:end].strip()
             elif content.startswith("{") and content.endswith("}"):
-                # 看起来像纯 JSON
+                # Looks like pure JSON
                 json_str = content
             else:
-                # 尝试找到 { ... } 结构
+                # Try to find { ... } structure
                 start_idx = content.find("{")
                 end_idx = content.rfind("}")
                 if start_idx >= 0 and end_idx > start_idx:
@@ -308,16 +308,16 @@ class TeaOrderAgent:
             try:
                 result = json.loads(json_str)
             except json.JSONDecodeError as json_err:
-                logger.error(f"JSON 解析失败。原始内容: {content[:500]}")
-                logger.error(f"提取的 JSON: {json_str[:500]}")
-                raise ValueError(f"JSON 解析失败: {json_err}")
+                logger.error(f"JSON parsing failed. Original content: {content[:500]}")
+                logger.error(f"Extracted JSON: {json_str[:500]}")
+                raise ValueError(f"JSON parsing failed: {json_err}")
 
-            # 验证必需字段
+            # Validate required fields
             if "assistant_reply" not in result or "order_state" not in result or "action" not in result:
-                logger.error(f"JSON 缺少必需字段。解析结果: {result}")
-                raise ValueError("JSON 缺少必需字段（assistant_reply, order_state, action）")
+                logger.error(f"JSON missing required fields. Parse result: {result}")
+                raise ValueError("JSON missing required fields (assistant_reply, order_state, action)")
 
-            # 构建 AgentResponse
+            # Build AgentResponse
             agent_response = AgentResponse(
                 assistant_reply=result["assistant_reply"],
                 order_state=OrderState(**result["order_state"]),
@@ -328,12 +328,12 @@ class TeaOrderAgent:
             return agent_response
 
         except Exception as e:
-            logger.error(f"❌ 所有 LLM 后端调用失败: {type(e).__name__}: {e}", exc_info=True)
-            logger.warning("LLM 调用失败，切换离线模式：%s", e)
+            logger.error(f"❌ All LLM backend calls failed: {type(e).__name__}: {e}", exc_info=True)
+            logger.warning("LLM call failed, switching to offline mode: %s", e)
             return self._offline_response(
                 user_text=user_text,
                 current_order_state=current_order_state,
-                reason=f"LLM 调用失败：{str(e)}"
+                reason=f"LLM call failed: {str(e)}"
             )
 
     async def _handle_tool_calls(
@@ -343,8 +343,8 @@ class TeaOrderAgent:
         current_order_state: OrderState,
         primary_backend: Optional[LLMBackend] = None
     ) -> AgentResponse:
-        """执行工具调用并获取最终回复"""
-        # 添加 assistant 的工具调用消息
+        """Execute tool calls and get final response"""
+        # Add assistant's tool call message
         messages.append({
             "role": "assistant",
             "content": None,
@@ -361,17 +361,17 @@ class TeaOrderAgent:
             ]
         })
 
-        # 执行每个工具调用
+        # Execute each tool call
         for tool_call in tool_calls:
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
 
-            logger.info(f"调用工具: {function_name}，参数: {function_args}")
+            logger.info(f"Calling tool: {function_name}, arguments: {function_args}")
 
-            # 执行工具
+            # Execute tool
             result = await self._execute_tool(function_name, function_args)
 
-            # 添加工具结果到消息历史
+            # Add tool result to message history
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -379,30 +379,30 @@ class TeaOrderAgent:
                 "content": json.dumps(result, ensure_ascii=False)
             })
 
-        # 让 LLM 根据工具结果生成最终回复（用自然语言包装工具返回的数据）
-        # 添加明确的指示，要求返回标准 JSON 格式
+        # Let LLM generate final response based on tool results (wrap tool data in natural language)
+        # Add explicit instructions to require standard JSON format
         messages.append({
             "role": "system",
-            "content": """基于工具返回的数据，用自然语言回复顾客。
+            "content": """Based on the data returned by the tool, respond to the customer in natural language.
 
-工具返回的数据可能包含：
-- **成功情况**：订单进度信息（current_stage_label, eta_seconds等）和订单详细内容（drink_name, size, sugar, ice, toppings）
-- **失败情况**：错误信息（error字段），例如 {"error": "订单 #52 不存在"}
+Tool returned data may contain:
+- **Success case**: Order progress information (current_stage_label, eta_seconds, etc.) and order details (drink_name, size, sugar, ice, toppings)
+- **Failure case**: Error message (error field), e.g., {"error": "Order #52 does not exist"}
 
-**重要处理规则**：
-1. 如果工具返回包含 "error" 字段，说明订单不存在，礼貌告诉顾客该订单不存在
-2. 如果工具返回成功，当顾客询问"这个订单是啥"、"订单内容"、"是什么"等问题时，你必须从工具返回的数据中提取并告诉顾客订单的具体内容（饮品名、规格、加料）
-3. 如果顾客只是问进度，简洁回答进度和预计完成时间即可
+**Important handling rules**:
+1. If tool return contains "error" field, order doesn't exist, politely tell customer the order doesn't exist
+2. If tool return succeeds, when customer asks "what is this order", "order content", "what is it", you must extract from tool data and tell customer the specific order content (drink name, specs, add-ons)
+3. If customer just asks about progress, concisely answer progress and estimated completion time
 
-必须返回 JSON 格式：
+Must return JSON format:
 {
-    "assistant_reply": "用自然语言描述工具返回的信息（如果有错误，告诉顾客订单不存在；如果成功，包括订单进度和订单详细内容）",
-    "order_state": 当前订单状态（如果顾客正在点单则更新，否则保持原状态）,
-    "action": "ask_more"（查询进度时默认使用 ask_more）
+    "assistant_reply": "Describe tool returned information in natural language (if error, tell customer order doesn't exist; if success, include order progress and order details)",
+    "order_state": Current order state (update if customer is ordering, otherwise keep original state),
+    "action": "ask_more" (default use ask_more when querying progress)
 }"""
         })
 
-        logger.info(f"调用 LLM 生成工具调用后的最终回复，消息数: {len(messages)}")
+        logger.info(f"Calling LLM to generate final response after tool call, message count: {len(messages)}")
 
         final_response, provider = await self.llm_router.call_with_fallback(
             messages=messages,
@@ -411,12 +411,12 @@ class TeaOrderAgent:
             primary=primary_backend
         )
 
-        logger.info(f"✅ 工具调用后 LLM 响应成功，使用后端: {provider.name}")
+        logger.info(f"✅ LLM response after tool call successful, using backend: {provider.name}")
         final_content = final_response.choices[0].message.content
         if not final_content:
-            raise ValueError("工具调用后 LLM 返回空内容")
+            raise ValueError("LLM returned empty content after tool call")
 
-        # 使用增强的 JSON 提取逻辑
+        # Use enhanced JSON extraction logic
         content = final_content.strip()
         json_str = content
         if "```json" in content:
@@ -435,8 +435,8 @@ class TeaOrderAgent:
         try:
             result = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.error(f"工具调用后 JSON 解析失败。原始内容: {final_content[:500]}")
-            raise ValueError(f"工具调用后 JSON 解析失败: {e}")
+            logger.error(f"JSON parsing failed after tool call. Original content: {final_content[:500]}")
+            raise ValueError(f"JSON parsing failed after tool call: {e}")
 
         return AgentResponse(
             assistant_reply=result["assistant_reply"],
@@ -446,14 +446,14 @@ class TeaOrderAgent:
         )
 
     async def _execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """执行具体工具"""
+        """Execute specific tool"""
         from fastapi.encoders import jsonable_encoder
 
         if function_name == "get_order_status":
             order_id = arguments["order_id"]
             order = db.get_order(order_id)
             if not order:
-                return {"error": f"订单 #{order_id} 不存在"}
+                return {"error": f"Order #{order_id} does not exist"}
             progress = build_order_progress(order)
             return jsonable_encoder(progress)
 
@@ -463,7 +463,7 @@ class TeaOrderAgent:
             return jsonable_encoder(snapshot)
 
         else:
-            return {"error": f"未知工具: {function_name}"}
+            return {"error": f"Unknown tool: {function_name}"}
 
     def _offline_response(
         self,
@@ -472,7 +472,7 @@ class TeaOrderAgent:
         reason: Optional[str] = None
     ) -> AgentResponse:
         """
-        当 LLM 不可用时的降级策略
+        Fallback strategy when LLM is unavailable
         """
         state = current_order_state.model_copy(deep=True)
         text = user_text or ""
@@ -497,11 +497,11 @@ class TeaOrderAgent:
                 if topping in normalized_text and topping not in state.toppings:
                     state.toppings.append(topping)
 
-        # 更新完成状态
+        # Update completion status
         required_fields = ["drink_name", "size", "sugar", "ice"]
         state.is_complete = all(getattr(state, field) for field in required_fields)
 
-        confirm_keywords = ["确认", "可以", "没问题", "下单", "就这样", "好的", "没了"]
+        confirm_keywords = ["confirm", "yes", "okay", "sure", "order", "that's it", "good", "done"]
         action = AgentAction.ASK_MORE
         reply_body: str
 
@@ -511,17 +511,17 @@ class TeaOrderAgent:
             reply_body = self._build_missing_field_prompt(missing_field, state)
         elif state.is_complete and any(keyword in normalized_text for keyword in confirm_keywords):
             action = AgentAction.SAVE_ORDER
-            reply_body = f"已确认：{self._build_order_summary(state)}。稍等片刻，我们马上为您准备。"
+            reply_body = f"Confirmed: {self._build_order_summary(state)}. Please wait a moment, we'll prepare it right away."
         elif state.is_complete:
             action = AgentAction.CONFIRM
-            reply_body = f"{self._build_order_summary(state)}。请确认是否需要调整。"
+            reply_body = f"{self._build_order_summary(state)}. Please confirm or let me know if you need any adjustments."
         else:
-            reply_body = "我还需要更多信息，请告诉我想要的饮品、杯型、甜度以及冰块。"
+            reply_body = "I need more information. Please tell me the drink, size, sweetness, and ice level you'd like."
 
-        notice = "【离线模式】"
+        notice = "[Offline Mode] "
         if reason:
-            notice += f"{reason}。"
-            logger.warning("触发离线模式，原因：%s", reason)
+            notice += f"{reason}. "
+            logger.warning("Offline mode triggered, reason: %s", reason)
 
         return AgentResponse(
             assistant_reply=f"{notice}{reply_body}",
@@ -531,31 +531,31 @@ class TeaOrderAgent:
         )
 
     def _match_option(self, text: str, options: List[str]) -> Optional[str]:
-        """根据文本匹配预定义选项"""
+        """Match predefined options based on text"""
         for option in options:
             if option in text:
                 return option
         return None
 
     def _build_missing_field_prompt(self, field: str, state: OrderState) -> str:
-        """根据缺失字段构建提示语"""
-        menu_names = "、".join(item.name for item in TEA_MENU)
+        """Build prompt based on missing field"""
+        menu_names = ", ".join(item.name for item in TEA_MENU)
         if field == "drink_name":
-            return f"请告诉我您想喝的饮品，可以选择：{menu_names}。"
+            return f"Please tell me which drink you'd like. You can choose from: {menu_names}."
         if field == "size":
-            drink = state.drink_name or "这杯饮品"
-            return f"已记录{drink}，请告诉我杯型（{'、'.join(SIZE_OPTIONS)}）。"
+            drink = state.drink_name or "this drink"
+            return f"Got it, {drink}. Please tell me the size ({', '.join(SIZE_OPTIONS)})."
         if field == "sugar":
-            return f"杯型已记录，请选择甜度（{'、'.join(SUGAR_OPTIONS)}）。"
+            return f"Size noted. Please choose sweetness level ({', '.join(SUGAR_OPTIONS)})."
         if field == "ice":
-            return f"好的，再告诉我冰块偏好（{'、'.join(ICE_OPTIONS)}）。"
-        return "请继续完善订单信息。"
+            return f"Great! Now tell me your ice preference ({', '.join(ICE_OPTIONS)})."
+        return "Please continue to complete the order information."
 
     def _build_order_summary(self, state: OrderState) -> str:
-        """构建订单摘要"""
+        """Build order summary"""
         parts = []
         if state.size and state.drink_name:
-            parts.append(f"{state.size}{state.drink_name}")
+            parts.append(f"{state.size} {state.drink_name}")
         elif state.drink_name:
             parts.append(state.drink_name)
         if state.sugar:
@@ -563,9 +563,9 @@ class TeaOrderAgent:
         if state.ice:
             parts.append(state.ice)
         if state.toppings:
-            parts.append(f"加料：{'、'.join(state.toppings)}")
-        return "，".join(parts)
+            parts.append(f"add-ons: {', '.join(state.toppings)}")
+        return ", ".join(parts)
 
 
-# 全局 Agent 实例
+# Global Agent instance
 tea_agent = TeaOrderAgent()
