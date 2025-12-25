@@ -43,6 +43,7 @@ from .models import (
 from .database import db
 from .session_manager import session_manager
 from .agent import tea_agent
+from .local_tts import synthesize_local_tts
 from .production import build_order_progress, build_queue_snapshot, find_progress_in_snapshot
 from .pricing import calculate_order_total
 from .time_utils import parse_timestamp
@@ -454,8 +455,21 @@ async def text_to_speech(request: TTSRequest):
     if not text:
         raise HTTPException(status_code=400, detail="缺少文本内容")
 
-    use_gtts = config.TTS_PROVIDER == "gtts" or not config.ASSEMBLYAI_API_KEY
-    if use_gtts:
+    provider = (config.TTS_PROVIDER or "assemblyai").lower()
+    if provider == "local":
+        return await synthesize_local_tts(text, request.voice)
+    if provider == "gtts":
+        try:
+            return await _synthesize_with_gtts(text, request.voice)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"gTTS 请求失败: {exc}")
+
+    if provider != "assemblyai":
+        provider = "assemblyai"
+
+    if not config.ASSEMBLYAI_API_KEY:
         try:
             return await _synthesize_with_gtts(text, request.voice)
         except HTTPException:

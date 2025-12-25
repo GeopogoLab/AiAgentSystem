@@ -173,3 +173,4 @@ tailwindcss + shadcn
 - **LLM 路由韧性**：优先路由到 OpenRouter，超时/失败时按顺序降级到 vLLM，再到规则/兼容逻辑，过程中记录每个后端的成功/失败统计，避免用户感知的中断。
 - **部署文档完整性**：所有部署说明必须同时覆盖 Modal 托管路径和 linux 自托管 vLLM 的脚本/健康检查，任何新增部署目录都要在 `vllm-workspace` 下保留配套 README 和运维脚本。
 - **Tailwind/shadcn 变更**：凡涉及 Tailwind 或 shadcn 的前端/后台渲染路径，必须在提交前通过 Vite build，保证未破坏类型导出或生成链路，否则不能合并。
+- **Local TTS**：本地语音合成路径仅允许英文模型，必须明确配置 `TTS_PROVIDER=local`、`LOCAL_TTS_MODEL`、`LOCAL_TTS_DEVICE`（优先 CUDA）并记录在部署说明，确保任何依赖的 GPU 资源/模型下载可在 32GB 显卡上正常初始化。

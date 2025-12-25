@@ -95,3 +95,9 @@ Frontend: http://localhost:3000  |  API docs: http://localhost:8000/docs
 - Deploy `vllm-workspace/modal/modal_vllm.py` or the Linux scripts in `vllm-workspace/linux-deployment/`.
 - After deployment, copy the returned URL into `.env` as `VLLM_BASE_URL` and define `VLLM_API_KEY` if Modal security is enabled.
 - vLLM serves as the second route for every prompt; failures are logged and trigger fallback metrics tracking.
+
+## 🎙️ Local English TTS
+- Install the local speech synthesis stack (Coqui TTS) via `pip install TTS` so you can run TTS on your 32 GB GPU without calling a hosted service.
+- Configure the backend by setting `TTS_PROVIDER=local`, `LOCAL_TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC`, `LOCAL_TTS_DEVICE=cuda`, and `LOCAL_TTS_FORMAT=wav` in `.env`.
+- The helper writes the generated waveform to a temporary WAV file, base64 encodes it, and returns `audio_base64`/`audio/wav` so the browser can play the clip without needing AssemblyAI credits.
+- Use `LOCAL_TTS_DEVICE=cpu` for lightweight testing, but keep `LOCAL_TTS_MODEL` as an English-only voice to match your requirement.

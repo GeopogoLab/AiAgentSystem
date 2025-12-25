@@ -28,6 +28,10 @@ class Config:
     TTS_PROVIDER = os.getenv("TTS_PROVIDER", "assemblyai")  # "assemblyai" or "gtts"
     GTTS_LANGUAGE = os.getenv("GTTS_LANGUAGE", "en")      # gTTS language
     GTTS_SLOW = os.getenv("GTTS_SLOW", "false").lower() == "true"  # Slow speech
+    LOCAL_TTS_MODEL = os.getenv("LOCAL_TTS_MODEL", "tts_models/en/ljspeech/tacotron2-DDC")
+    LOCAL_TTS_DEVICE = os.getenv("LOCAL_TTS_DEVICE", "cuda")
+    LOCAL_TTS_SPEAKER = os.getenv("LOCAL_TTS_SPEAKER", "")
+    LOCAL_TTS_FORMAT = os.getenv("LOCAL_TTS_FORMAT", "wav")
 
     # AssemblyAI Streaming STT（补充缺失参数）
     ASSEMBLYAI_STREAMING_URL = os.getenv(
