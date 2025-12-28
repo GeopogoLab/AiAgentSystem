@@ -170,7 +170,7 @@
 tailwindcss + shadcn
 
 ## 架构规则
-- **LLM 路由韧性**：优先路由到 OpenRouter，超时/失败时按顺序降级到 vLLM，再到规则/兼容逻辑，过程中记录每个后端的成功/失败统计，避免用户感知的中断。
-- **部署文档完整性**：所有部署说明必须同时覆盖 Modal 托管路径和 linux 自托管 vLLM 的脚本/健康检查，任何新增部署目录都要在 `vllm-workspace` 下保留配套 README 和运维脚本。
-- **Tailwind/shadcn 变更**：凡涉及 Tailwind 或 shadcn 的前端/后台渲染路径，必须在提交前通过 Vite build，保证未破坏类型导出或生成链路，否则不能合并。
-- **Local TTS**：本地语音合成路径仅允许英文模型，必须明确配置 `TTS_PROVIDER=local`、`LOCAL_TTS_MODEL`、`LOCAL_TTS_DEVICE`（优先 CUDA）并记录在部署说明，确保任何依赖的 GPU 资源/模型下载可在 32GB 显卡上正常初始化。
+- **Streaming TTS chunking**：音频块必须以浏览器可解码的边界输出，建议直接发送 PCM/WAV 或按句子输出完整 MP3，避免客户端去解析任意大小的 mp3 slice。
+- **STT 回退路径**：流式识别只维护一套统一 payload，主/备后端只能切换业务逻辑而不能新增复杂分支，保证前端不需要关心后端来源。
+- **本地流式依赖可见性**：所有依赖 Piper/FFmpeg 的流程必须在架构文档、配置模板和启动日志中声明，便于运维在上线前验证二进制可用性。
+- **Voice service workspace**：STT/TTS 工具原地迁移到 `whisper-workspace/voice_service`，后端通过根包 `voice_service` import，确保语音逻辑始终由 workspace 承管。

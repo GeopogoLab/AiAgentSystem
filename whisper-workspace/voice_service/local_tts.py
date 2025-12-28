@@ -14,8 +14,8 @@ try:
 except ImportError:  # pragma: no cover
     TTS = None
 
-from .config import config
-from .models import TTSResponse
+from backend.config import config
+from backend.models import TTSResponse
 
 _local_tts_model: Optional[TTS] = None
 

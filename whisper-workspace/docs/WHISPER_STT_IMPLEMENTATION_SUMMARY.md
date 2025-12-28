@@ -12,7 +12,7 @@
   - 自动扩缩容 (3 分钟空闲后释放 GPU)
 
 ### 2. 后端 STT 路由器实现
-- **文件**: `backend/stt/backends.py` (60 行)
+- **文件**: `whisper-workspace/voice_service/stt/backends.py` (60 行)
 - **功能**:
   - 统一管理 primary/fallback 后端
   - STTBackend 数据类（name, websocket_url, headers, timeout）
@@ -158,7 +158,7 @@ cd backend
 - **部署指南**: `whisper-workspace/docs/DEPLOYMENT_GUIDE.md`
 - **配置示例**: `.env.example`
 - **Modal 服务**: `whisper-workspace/modal/modal_whisper_stt.py`
-- **STT 路由器**: `backend/stt/backends.py`
+- **STT 路由器**: `whisper-workspace/voice_service/stt/backends.py`
 
 ---
 

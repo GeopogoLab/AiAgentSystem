@@ -43,11 +43,12 @@ from .models import (
 from .database import db
 from .session_manager import session_manager
 from .agent import tea_agent
-from .local_tts import synthesize_local_tts
 from .production import build_order_progress, build_queue_snapshot, find_progress_in_snapshot
 from .pricing import calculate_order_total
 from .time_utils import parse_timestamp
-from .stt.backends import STTBackendRouter
+from voice_service.local_tts import synthesize_local_tts
+from voice_service.stt import STTBackendRouter
+from voice_service.streaming_tts import get_tts_engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -448,62 +449,93 @@ async def production_queue_ws(websocket: WebSocket):
         return
 
 
-@app.post("/tts", response_model=TTSResponse)
-async def text_to_speech(request: TTSRequest):
-    """文本转语音（AssemblyAI 或 gTTS）"""
-    text = (request.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="缺少文本内容")
+# Legacy HTTP TTS endpoint (replaced by /ws/tts WebSocket streaming)
+# @app.post("/tts", response_model=TTSResponse)
+# async def text_to_speech(request: TTSRequest):
+#     ...
 
-    provider = (config.TTS_PROVIDER or "assemblyai").lower()
-    if provider == "local":
-        return await synthesize_local_tts(text, request.voice)
-    if provider == "gtts":
-        try:
-            return await _synthesize_with_gtts(text, request.voice)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"gTTS 请求失败: {exc}")
+@app.websocket("/ws/tts")
+async def streaming_tts_ws(websocket: WebSocket):
+    """流式 TTS WebSocket 端点（Piper TTS）
 
-    if provider != "assemblyai":
-        provider = "assemblyai"
+    接收文本，流式返回音频块。
 
-    if not config.ASSEMBLYAI_API_KEY:
-        try:
-            return await _synthesize_with_gtts(text, request.voice)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"gTTS 请求失败: {exc}")
+    协议:
+        客户端 -> 服务器: {"text": "...", "format": "mp3"}
+        服务器 -> 客户端: {"message_type": "audio_chunk", "audio_data": "base64...", "chunk_index": N, "is_final": false}
+        服务器 -> 客户端: {"message_type": "audio_chunk", "is_final": true}
+    """
+    await websocket.accept()
 
-    voice = request.voice or config.ASSEMBLYAI_TTS_VOICE or "alloy"
-    payload = {"text": text, "voice": voice, "format": "mp3"}
-    headers = {
-        "authorization": config.ASSEMBLYAI_API_KEY,
-        "content-type": "application/json",
-    }
-    url = f"{config.ASSEMBLYAI_API_URL}/text-to-speech/generate"
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail=f"TTS 失败: {response.text}")
-        data = response.json()
-        audio_url = data.get("audio_url")
-        audio_base64 = data.get("audio_data") or data.get("audio_base64")
-        if not audio_url and not audio_base64:
-            audio_base64 = data.get("audio")
-        return TTSResponse(
-            audio_url=audio_url,
-            audio_base64=audio_base64,
-            voice=voice,
-            format=data.get("format", "mp3"),
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"TTS 请求失败: {exc}")
+        # 接收 TTS 请求
+        message = await websocket.receive_json()
+        text = message.get("text", "").strip()
+
+        if not text:
+            await websocket.send_json({
+                "message_type": "error",
+                "error": "Missing text field"
+            })
+            await websocket.close()
+            return
+
+        output_format = message.get("format", "mp3")
+        logger.info(f"TTS request: {len(text)} chars, format={output_format}")
+
+        # 获取 TTS 引擎
+        try:
+            tts_engine = get_tts_engine(config)
+        except Exception as e:
+            logger.error(f"Failed to initialize TTS engine: {e}")
+            await websocket.send_json({
+                "message_type": "error",
+                "error": f"TTS engine initialization failed: {str(e)}"
+            })
+            await websocket.close()
+            return
+
+        # 流式生成并发送
+        chunk_index = 0
+        async for audio_chunk in tts_engine.synthesize_stream(text, output_format):
+            # Base64 编码
+            audio_b64 = base64.b64encode(audio_chunk).decode("ascii")
+
+            # 发送音频块
+            await websocket.send_json({
+                "message_type": "audio_chunk",
+                "audio_data": audio_b64,
+                "chunk_index": chunk_index,
+                "is_final": False
+            })
+            chunk_index += 1
+            logger.debug(f"Sent audio chunk {chunk_index}, size={len(audio_chunk)} bytes")
+
+        # 发送结束标记
+        await websocket.send_json({
+            "message_type": "audio_chunk",
+            "audio_data": "",
+            "chunk_index": chunk_index,
+            "is_final": True
+        })
+        logger.info(f"TTS completed: {chunk_index} chunks sent")
+
+    except WebSocketDisconnect:
+        logger.info("TTS WebSocket disconnected by client")
+    except Exception as e:
+        logger.error(f"TTS WebSocket error: {e}")
+        try:
+            await websocket.send_json({
+                "message_type": "error",
+                "error": str(e)
+            })
+        except:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
 
 
 @app.websocket("/ws/stt")

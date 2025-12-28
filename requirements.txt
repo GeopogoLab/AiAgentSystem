@@ -9,4 +9,5 @@ pydantic==2.5.0
 aiosqlite==0.19.0
 websockets==12.0
 gTTS==2.5.1
-TTS==0.13.3
+# TTS==0.13.3  # Replaced by Piper TTS
+piper-tts>=1.2.0

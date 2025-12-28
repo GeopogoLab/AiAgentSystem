@@ -108,7 +108,7 @@ export class ApiService {
   }
 
   /**
-   * 请求 TTS 音频
+   * 请求 TTS 音频（旧版 HTTP，已弃用）
    */
   static async requestTTS(text: string): Promise<TTSApiResponse> {
     const response = await fetch(`${API_BASE_URL}/tts`, {
@@ -122,5 +122,83 @@ export class ApiService {
     }
 
     return response.json();
+  }
+
+  /**
+   * 流式 TTS（WebSocket）
+   *
+   * @param text 要合成的文本
+   * @param onChunk 接收到音频块的回调（audioData: Base64字符串, isLast: 是否最后一块）
+   * @param onError 错误回调
+   * @returns 取消函数（可调用以中断连接）
+   */
+  static streamTTS(
+    text: string,
+    onChunk: (audioData: string, isLast: boolean) => void,
+    onError?: (error: string) => void
+  ): () => void {
+    const apiBase = API_BASE_URL;
+    const wsBase = apiBase.replace(/^http/i, (match) =>
+      match.toLowerCase() === 'https' ? 'wss' : 'ws'
+    );
+    const wsUrl = `${wsBase.replace(/\/$/, '')}/ws/tts`;
+
+    const ws = new WebSocket(wsUrl);
+    let cancelled = false;
+
+    ws.onopen = () => {
+      if (cancelled) {
+        ws.close();
+        return;
+      }
+      // 发送 TTS 请求
+      ws.send(JSON.stringify({ text, format: 'mp3' }));
+    };
+
+    ws.onmessage = (event) => {
+      if (cancelled) return;
+
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.message_type === 'error') {
+          onError?.(data.error);
+          ws.close();
+          return;
+        }
+
+        if (data.message_type === 'audio_chunk') {
+          const isLast = data.is_final === true;
+          onChunk(data.audio_data, isLast);
+
+          if (isLast) {
+            ws.close();
+          }
+        }
+      } catch (error) {
+        console.error('Failed to parse TTS message:', error);
+        onError?.('Failed to parse TTS response');
+        ws.close();
+      }
+    };
+
+    ws.onerror = (event) => {
+      if (cancelled) return;
+      console.error('TTS WebSocket error:', event);
+      onError?.('WebSocket connection failed');
+      ws.close();
+    };
+
+    ws.onclose = () => {
+      // Connection closed
+    };
+
+    // 返回取消函数
+    return () => {
+      cancelled = true;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
   }
 }

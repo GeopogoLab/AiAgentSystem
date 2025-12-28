@@ -20,8 +20,8 @@
 
 ### 后端文件
 - `backend/config.py` - 新增 STT 配置（+17 行）
-- `backend/stt/__init__.py` - STT 模块初始化
-- `backend/stt/backends.py` - STT 后端路由器（60 行）
+- `backend/stt/__init__.py` - STT 模块初始化（导出 workspace 管理的路由器）
+- `whisper-workspace/voice_service/stt/backends.py` - STT 后端路由器（60 行）
 - `backend/main.py` - 重构 `/ws/stt` 端点（~200 行，替换原有 138 行）
 
 ### 配置文件

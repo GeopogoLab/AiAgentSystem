@@ -70,5 +70,17 @@ class Config:
     # Session
     MAX_HISTORY_LENGTH = 10  # 最多保存 10 轮对话
 
+    # Streaming TTS (Piper)
+    STREAMING_TTS_ENABLED = os.getenv("STREAMING_TTS_ENABLED", "true").lower() == "true"
+    PIPER_MODEL_PATH = os.getenv(
+        "PIPER_MODEL_PATH",
+        "./backend/models/en_US-lessac-medium.onnx"
+    )
+    PIPER_CONFIG_PATH = os.getenv(
+        "PIPER_CONFIG_PATH",
+        "./backend/models/en_US-lessac-medium.onnx.json"
+    )
+    PIPER_SAMPLE_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
+
 
 config = Config()

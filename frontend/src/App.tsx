@@ -7,6 +7,7 @@ import { TextInput } from './components/TextInput';
 import { VoiceInput } from './components/VoiceInput';
 import { ProductionBoard } from './components/ProductionBoard';
 import { ApiService } from './services/api';
+import { StreamingAudioPlayer } from './services/StreamingAudioPlayer';
 import { generateSessionId } from './services/utils';
 import {
   Message,
@@ -55,7 +56,8 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueSnapshot, setQueueSnapshot] = useState<ProductionQueueSnapshot | null>(null);
   const spokenTextRef = useRef<string | null>(null);
-  const autoAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioPlayerRef = useRef<StreamingAudioPlayer | null>(null);
+  const cancelTTSRef = useRef<(() => void) | null>(null);
 
   const queueMetrics = useMemo(() => {
     const activeCount = queueSnapshot?.active_orders?.length ?? 0;
@@ -161,7 +163,7 @@ function App() {
     return () => {
       closed = true;
       ws?.close();
-      autoAudioRef.current?.pause();
+      audioPlayerRef.current?.destroy();
     };
   }, []);
 
@@ -206,7 +208,8 @@ function App() {
   useEffect(() => {
     if (!ENABLE_AUTO_TTS || mode !== 'voice') {
       spokenTextRef.current = null;
-      autoAudioRef.current?.pause();
+      cancelTTSRef.current?.();
+      audioPlayerRef.current?.stop();
       return;
     }
     const text = lastAssistantMessage?.trim();
@@ -217,32 +220,44 @@ function App() {
       return;
     }
     spokenTextRef.current = text;
+
+    // 停止之前的播放
+    cancelTTSRef.current?.();
+    audioPlayerRef.current?.destroy();
+
+    // 创建新的流式播放器
+    audioPlayerRef.current = new StreamingAudioPlayer();
+
     let cancelled = false;
 
     const speak = async () => {
       try {
-        const data = await ApiService.requestTTS(text);
-        const src =
-          data.audio_url ??
-          (data.audio_base64 ? `data:audio/${data.format ?? 'mp3'};base64,${data.audio_base64}` : null);
-        if (!src || cancelled) {
-          return;
-        }
-        autoAudioRef.current?.pause();
-        const audio = new Audio(src);
-        autoAudioRef.current = audio;
-        audio.onended = () => {
-          if (autoAudioRef.current === audio) {
-            autoAudioRef.current = null;
+        cancelTTSRef.current = ApiService.streamTTS(
+          text,
+          async (audioData, isLast) => {
+            if (cancelled) return;
+
+            // 空数据或最后一块，跳过
+            if (!audioData || isLast) {
+              return;
+            }
+
+            // 添加到播放队列
+            try {
+              await audioPlayerRef.current?.enqueueChunk(audioData, 'mp3');
+            } catch (error) {
+              console.error('Failed to play audio chunk:', error);
+            }
+          },
+          (error) => {
+            if (!cancelled) {
+              console.error('Streaming TTS failed:', error);
+            }
           }
-        };
-        audio.onerror = () => {
-          console.error('Auto TTS 播放失败');
-        };
-        await audio.play();
+        );
       } catch (error) {
         if (!cancelled) {
-          console.error('自动 TTS 失败', error);
+          console.error('Failed to start streaming TTS:', error);
         }
       }
     };
@@ -251,6 +266,8 @@ function App() {
 
     return () => {
       cancelled = true;
+      cancelTTSRef.current?.();
+      audioPlayerRef.current?.stop();
     };
   }, [mode, lastAssistantMessage]);
 
